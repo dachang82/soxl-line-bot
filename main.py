@@ -207,13 +207,12 @@ def build_message(today, state_before, state_after, action, action_reason) -> st
     lines.append("")
     lines.append(f"SOXL RSI2: {today['rsi2']:.2f}")
     lines.append(f"VIX: {today['vix']:.2f}")
-    lines.append(f"QQQ vs 150MA: {qqq_vs_150 * 100:.2f}%")
-    lines.append(f"QQQ vs 200MA: {qqq_vs_200 * 100:.2f}%")
+    lines.append(f"QQQ vs150MA: {qqq_vs_150 * 100:.2f}%")
+    lines.append(f"QQQ vs200MA: {qqq_vs_200 * 100:.2f}%")
     lines.append("")
-    lines.append(f"Before: {state_before['position']}")
+    lines.append(f"SOXL Signal: {bool(today['sig_soxl'])}")
     lines.append(f"Action: {action}")
-    lines.append(f"Reason: {action_reason}")
-    lines.append(f"After: {state_after['position']}")
+    lines.append(f"Final Position: {state_after['position']}")
 
     if state_after["position"] == "SOXL":
         lines.append(f"Entry Price: {state_after['entry_price']:.2f}")
