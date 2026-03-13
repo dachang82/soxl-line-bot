@@ -243,7 +243,7 @@ if state_after.get("pending_entry") == "SOXL":
 if state_after.get("pending_exit_next_open"):
     lines.append("Pending: EXIT_SOXL_NEXT_OPEN")
 
-return "\n".join(lines)
+    return "\n".join(lines)
 
 # =========================
 # メイン判定
