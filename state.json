@@ -1,6 +1,11 @@
 {
-  "position": "QQQ",
+  "position": "CASH",
+  "core_position": "CASH",
   "entry_price": null,
   "entry_date": null,
-  "hold_days": 0
+  "hold_days": 0,
+  "pending_entry": null,
+  "pending_entry_signal_date": null,
+  "pending_exit_next_open": false,
+  "pending_exit_reason": null
 }
