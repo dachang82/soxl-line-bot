@@ -233,10 +233,10 @@ def build_message(today, state_before, state_after, action, action_reason) -> st
     if state_after["position"] == "SOXL":
     lines.append(f"Entry Price: {state_after['entry_price']:.2f}")
     lines.append(f"Entry Date: {state_after['entry_date']}")
-    lines.append(f"Hold Days: {state_after['hold_days']} / {MAX_HOLD}")
-
-    pnl = today["close"] / state_after["entry_price"] - 1
-    lines.append(f"Unrealized PnL: {pnl*100:.2f}%")
+    lines.append(f"Hold Days: {state_after['hold_days']} / {SOXL_MAX_HOLD}")
+    
+        pnl = today["close"] / state_after["entry_price"] - 1
+        lines.append(f"Unrealized PnL: {pnl*100:.2f}%")
 
     if state_after.get("pending_entry") == "SOXL":
         lines.append("Pending: ENTER_SOXL_NEXT_OPEN")
