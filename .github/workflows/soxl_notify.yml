@@ -2,10 +2,8 @@ name: SOXL Strategy Daily Notify
 
 on:
   schedule:
-    # 毎日6時（UTC） = 日本時間15時（夏時間）/ 16時（冬時間）
-    # 米国市場終値後を想定
-    - cron: '0 6 * * 1-5'   # 平日のみ
-  workflow_dispatch:          # 手動実行も可能
+    - cron: '10 21 * * 1-5'   # UTC 21:10 = 冬時間 日本6:10（市場終了10分後）
+  workflow_dispatch:            # 手動実行も可能
 
 jobs:
   notify:
