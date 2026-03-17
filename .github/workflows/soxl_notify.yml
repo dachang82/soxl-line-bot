@@ -1,0 +1,34 @@
+name: SOXL Strategy Daily Notify
+
+on:
+  schedule:
+    # 毎日6時（UTC） = 日本時間15時（夏時間）/ 16時（冬時間）
+    # 米国市場終値後を想定
+    - cron: '0 6 * * 1-5'   # 平日のみ
+  workflow_dispatch:          # 手動実行も可能
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # state.jsonのpushに必要
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy requests
+
+      - name: Run strategy
+        env:
+          LINE_TOKEN:         ${{ secrets.LINE_TOKEN }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:  ${{ github.repository }}
+        run: python soxl_notify.py
