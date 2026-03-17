@@ -7,5 +7,7 @@
   "pending_entry": null,
   "pending_entry_signal_date": null,
   "pending_exit_next_open": false,
-  "pending_exit_reason": null
+  "pending_exit_reason": null,
+  "core_asset1": "GLD",
+  "core_asset2": "SMH"
 }
