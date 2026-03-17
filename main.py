@@ -1,413 +1,428 @@
+# ============================================================
+# SOXL Strategy v6 - GitHub Actions + LINE通知
+# Core: QQQ/SMH/XLE/GLD/VHT rotation (3M+6M, top2)
+# SOXL: OR3条件（RSI2 / BB / セリクラ）
+# ============================================================
+
 import os
 import json
 import requests
 import subprocess
 from typing import Optional
-
 import pandas as pd
+import numpy as np
 import yfinance as yf
-
 
 # =========================
 # 設定
 # =========================
+START          = "2015-01-01"
+SOXL_TP        = 0.25
+SOXL_SL        = -0.15
+SOXL_MAX_HOLD  = 25
+QQQ_BAND       = 0.01
+QQQ_GAP        = 0.005   # QQQ > MA200 * 1.005
+BB_SIGMA       = 2.5
+BB_WINDOW      = 20
+CORE_TICKERS   = ["QQQ", "SMH", "XLE", "GLD", "VHT"]
 
-START = "2015-01-01"
-
-SOXL_TP = 0.25
-SOXL_SL = -0.15
-SOXL_MAX_HOLD = 25
-
-QQQ_BAND = 0.01  # 1% hysteresis
-
-STATE_PATH = "state.json"
-
-LINE_TOKEN = os.environ["LINE_TOKEN"]
-
-# GitHub Actions で state.json を commit/push するために使う
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "")  # 例: dachang82/soxl-line-bot
-
+STATE_PATH         = "state.json"
+LINE_TOKEN         = os.environ["LINE_TOKEN"]
+GITHUB_TOKEN       = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPOSITORY  = os.environ.get("GITHUB_REPOSITORY", "")
 
 # =========================
-# 共通関数
+# GitHub push
 # =========================
+def push_state_to_github():
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        print("Skip push: missing token/repo")
+        return
+    repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPOSITORY}.git"
+    subprocess.run(["git", "config", "user.name",  "github-actions[bot]"], check=True)
+    subprocess.run(["git", "config", "user.email",
+                    "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+    subprocess.run(["git", "add", STATE_PATH], check=True)
+    diff = subprocess.run(["git", "diff", "--cached", "--quiet"], check=False)
+    if diff.returncode == 0:
+        print("No state change.")
+        return
+    subprocess.run(["git", "commit", "-m", "Update state.json"], check=True)
+    subprocess.run(["git", "push", repo_url, "HEAD:main"], check=True)
 
-def send_line(msg: str) -> None:
+# =========================
+# LINE送信
+# =========================
+def send_line(msg: str):
     url = "https://api.line.me/v2/bot/message/broadcast"
     headers = {
         "Authorization": f"Bearer {LINE_TOKEN}",
         "Content-Type": "application/json",
     }
-    data = {
-        "messages": [
-            {"type": "text", "text": msg}
-        ]
-    }
-    r = requests.post(url, headers=headers, json=data, timeout=30)
+    r = requests.post(url, headers=headers,
+                      json={"messages": [{"type": "text", "text": msg}]},
+                      timeout=30)
     r.raise_for_status()
 
-
-def flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df
-
-
-def calc_rsi2(close: pd.Series) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(2).mean()
-    avg_loss = loss.rolling(2).mean()
-
-    rs = avg_gain / avg_loss
-    rsi2 = 100 - (100 / (1 + rs))
-    return rsi2
-
-
+# =========================
+# state管理
+# =========================
 def load_state() -> dict:
-    default_state = {
-        "position": "CASH",          # "SOXL", "QQQ", "CASH"
-        "core_position": "CASH",     # QQQ/CASH の内部状態（ヒステリシス用）
-        "entry_price": None,         # SOXL entry price
-        "entry_date": None,          # SOXL entry date
-        "hold_days": 0,              # SOXL hold days
-        "pending_entry": None,       # "SOXL" or None
+    default = {
+        "position":                  "CORE",   # "SOXL" or "CORE"
+        "entry_price":               None,
+        "entry_date":                None,
+        "hold_days":                 0,
+        "pending_entry":             None,
         "pending_entry_signal_date": None,
-        "pending_exit_next_open": False,
-        "pending_exit_reason": None,
+        "pending_exit_next_open":    False,
+        "pending_exit_reason":       None,
+        "core_asset1":               "",
+        "core_asset2":               "",
     }
-
     if not os.path.exists(STATE_PATH):
-        return default_state
-
+        return default
     with open(STATE_PATH, "r", encoding="utf-8") as f:
         state = json.load(f)
-
-    for k, v in default_state.items():
+    for k, v in default.items():
         state.setdefault(k, v)
-
     return state
 
-
-def save_state(state: dict) -> None:
+def save_state(state: dict):
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
+# =========================
+# データ取得・指標計算
+# =========================
+def flatten_cols(x):
+    if isinstance(x.columns, pd.MultiIndex):
+        x.columns = x.columns.get_level_values(0)
+    return x
 
-def push_state_to_github() -> None:
-    """
-    state.json の更新を GitHub に commit / push する
-    """
-    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
-        print("Skip push_state_to_github: missing GITHUB_TOKEN or GITHUB_REPOSITORY")
-        return
-
-    repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPOSITORY}.git"
-
-    subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
-        check=True
-    )
-    subprocess.run(["git", "add", STATE_PATH], check=True)
-
-    diff = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"],
-        check=False
-    )
-
-    # 差分がないなら何もしない
-    if diff.returncode == 0:
-        print("No state change to commit.")
-        return
-
-    subprocess.run(["git", "commit", "-m", "Update state.json"], check=True)
-    subprocess.run(["git", "push", repo_url, "HEAD:main"], check=True)
-
+def calc_rsi2(close, period=2):
+    delta = close.diff()
+    gain  = delta.clip(lower=0).rolling(period).mean()
+    loss  = (-delta.clip(upper=0)).rolling(period).mean()
+    rs    = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def fetch_data() -> pd.DataFrame:
-    soxl = yf.download("SOXL", start=START, auto_adjust=False, progress=False)
-    qqq = yf.download("QQQ", start=START, auto_adjust=False, progress=False)
-    smh = yf.download("SMH", start=START, auto_adjust=False, progress=False)
-    vix = yf.download("^VIX", start=START, auto_adjust=False, progress=False)
+    tickers = ["SOXL", "QQQ", "SMH", "XLE", "GLD", "VHT", "^VIX"]
+    raw = {t: flatten_cols(yf.download(t, start=START,
+                           auto_adjust=False, progress=False))
+           for t in tickers}
 
-    soxl = flatten_columns(soxl)
-    qqq = flatten_columns(qqq)
-    smh = flatten_columns(smh)
-    vix = flatten_columns(vix)
+    df = pd.DataFrame(index=raw["SOXL"].index)
+    df["open"]  = raw["SOXL"]["Open"]
+    df["high"]  = raw["SOXL"]["High"]
+    df["low"]   = raw["SOXL"]["Low"]
+    df["close"] = raw["SOXL"]["Close"]
+    df["qqq"]   = raw["QQQ"]["Close"]
+    df["smh"]   = raw["SMH"]["Close"]
+    df["xle"]   = raw["XLE"]["Close"]
+    df["gld"]   = raw["GLD"]["Close"]
+    df["vht"]   = raw["VHT"]["Close"]
+    df["vix"]   = raw["^VIX"]["Close"]
 
-    df = pd.DataFrame(index=soxl.index)
-
-    df["open"] = soxl["Open"]
-    df["high"] = soxl["High"]
-    df["low"] = soxl["Low"]
-    df["close"] = soxl["Close"]
-
-    df["qqq"] = qqq["Close"]
-    df["smh"] = smh["Close"]
-    df["vix"] = vix["Close"]
-
-    df["rsi2"] = calc_rsi2(df["close"])
-
+    df["rsi2"]      = calc_rsi2(df["close"])
     df["qqq_ma200"] = df["qqq"].rolling(200).mean()
     df["smh_ma200"] = df["smh"].rolling(200).mean()
+    df["smh_ma150"] = df["smh"].rolling(150).mean()
+    df["bb_mid"]    = df["close"].rolling(BB_WINDOW).mean()
+    df["bb_lower"]  = df["bb_mid"] - BB_SIGMA * df["close"].rolling(BB_WINDOW).std()
 
     df = df.dropna().copy()
 
-    df["sig_soxl"] = (
+    # シグナル
+    df["sig_base"] = (
         (df["vix"] >= 20) &
         (df["rsi2"] < 6) &
-        (df["smh"] > df["smh_ma200"])
+        (df["smh"] > df["smh_ma200"]) &
+        (df["qqq"] > df["qqq_ma200"] * (1 + QQQ_GAP))
     ).fillna(False)
 
+    df["sig_bb"] = (
+        (df["close"] < df["bb_lower"]) &
+        (df["smh"] > df["smh_ma150"])
+    ).fillna(False)
+
+    df["sig_sc"] = (
+        (df["vix"] >= 35) &
+        (df["rsi2"] < 10)
+    ).fillna(False)
+
+    df["sig_or3"] = (df["sig_base"] | df["sig_bb"] | df["sig_sc"]).fillna(False)
     return df
 
+# =========================
+# Core Rotation計算
+# =========================
+def calc_core_rotation(df: pd.DataFrame):
+    """
+    月末スコア(3M+6M)でtop2を選択。
+    今月・来月の保有銘柄を返す。
+    """
+    prices = df[["qqq","smh","xle","gld","vht"]].copy()
+    prices.columns = CORE_TICKERS
 
-def is_business_day_indexed(df: pd.DataFrame, date_str: Optional[str]) -> bool:
-    if not date_str:
-        return False
+    monthly = prices.resample("ME").last()
+    score   = monthly.pct_change(3) + monthly.pct_change(6)
+
+    results = []
+    for i in range(len(monthly)):
+        s = score.iloc[i].dropna()
+        if len(s) < 2:
+            results.append(("", ""))
+            continue
+        top2 = s.nlargest(2).index.tolist()
+        results.append((top2[0], top2[1]))
+
+    monthly_assets = pd.DataFrame(results, index=monthly.index,
+                                  columns=["asset1", "asset2"])
+
+    # 今月末時点のtop2（最新月末）
+    today      = df.index[-1]
+    this_month_end = today.to_period("M").to_timestamp("M")
+
+    # 今月（現在適用中）= 先月末で決定したもの
+    prev_month_end = (today.to_period("M") - 1).to_timestamp("M")
+
+    def get_assets(month_end):
+        # month_end以前で最後のスコア
+        valid = monthly_assets[monthly_assets.index <= month_end]
+        if len(valid) == 0:
+            return "", ""
+        row = valid.iloc[-1]
+        return row["asset1"], row["asset2"]
+
+    cur_a1, cur_a2   = get_assets(prev_month_end)   # 今月適用中
+    next_a1, next_a2 = get_assets(this_month_end)   # 来月予定
+
+    return cur_a1, cur_a2, next_a1, next_a2
+
+# =========================
+# 保有日数カウント
+# =========================
+def count_hold_days(df, entry_date, current_date) -> int:
+    if not entry_date:
+        return 0
     try:
-        ts = pd.Timestamp(date_str)
-        return ts in df.index
+        entry_ts = pd.Timestamp(entry_date)
+        sliced = df.loc[(df.index >= entry_ts) & (df.index <= current_date)]
+        return int(len(sliced))
     except Exception:
-        return False
-
-
-def count_hold_days(df: pd.DataFrame, entry_date: str, current_date: pd.Timestamp) -> int:
-    """
-    entry_date から current_date までの営業日数を index ベースで数える
-    entry日を1日目として数える
-    """
-    if not is_business_day_indexed(df, entry_date):
         return 0
 
-    entry_ts = pd.Timestamp(entry_date)
-    sliced = df.loc[(df.index >= entry_ts) & (df.index <= current_date)]
-    return int(len(sliced))
+# =========================
+# 通知メッセージ生成
+# =========================
+def build_message(today, state_after, action, action_reason,
+                  cur_a1, cur_a2, next_a1, next_a2) -> str:
 
+    date_str = str(today.name.date())
 
-def update_core_position(qqq_price: float, qqq_ma200: float, current_core: str, band: float) -> str:
-    """
-    QQQ/CASH のヒステリシス判定
-    """
-    upper = qqq_ma200 * (1 + band)
-    lower = qqq_ma200 * (1 - band)
+    qqq_vs_200  = today["qqq"] / today["qqq_ma200"] - 1
+    smh_vs_200  = today["smh"] / today["smh_ma200"] - 1
+    smh_vs_150  = today["smh"] / today["smh_ma150"] - 1
+    qqq_filter  = today["qqq"] > today["qqq_ma200"] * (1 + QQQ_GAP)
 
-    if current_core not in ["QQQ", "CASH"]:
-        current_core = "CASH"
+    sig1 = bool(today["sig_base"])
+    sig2 = bool(today["sig_bb"])
+    sig3 = bool(today["sig_sc"])
+    sig_or3 = bool(today["sig_or3"])
 
-    if current_core == "CASH":
-        if qqq_price > upper:
-            return "QQQ"
-        return "CASH"
-
-    # current_core == "QQQ"
-    if qqq_price < lower:
-        return "CASH"
-    return "QQQ"
-
-
-def build_message(today, state_before, state_after, action, action_reason) -> str:
-    qqq_vs_200 = today["qqq"] / today["qqq_ma200"] - 1
-    smh_vs_200 = today["smh"] / today["smh_ma200"] - 1
+    def yn(b): return "✅" if b else "❌"
 
     lines = []
-    lines.append("SOXL / QQQ Regime Strategy")
+    lines.append(f"【SOXL戦略 日次レポート {date_str}】")
     lines.append("")
-    lines.append(f"Date: {today.name.date()}")
-    lines.append("")
-    lines.append(f"SOXL RSI2: {today['rsi2']:.2f}")
-    lines.append(f"VIX: {today['vix']:.2f}")
-    lines.append(f"QQQ vs200MA: {qqq_vs_200 * 100:.2f}%")
-    lines.append(f"SMH vs200MA: {smh_vs_200 * 100:.2f}%")
-    lines.append("")
-    lines.append(f"SOXL Signal: {bool(today['sig_soxl'])}")
-    lines.append(f"Core Position: {state_after['core_position']}")
-    lines.append(f"Action: {action}")
-    lines.append(f"Reason: {action_reason}")
-    lines.append(f"Final Position: {state_after['position']}")
 
-    if state_after["position"] == "SOXL" and state_after["entry_price"] is not None:
-        lines.append(f"Entry Price: {state_after['entry_price']:.2f}")
-        lines.append(f"Entry Date: {state_after['entry_date']}")
-        lines.append(f"Hold Days: {state_after['hold_days']} / {SOXL_MAX_HOLD}")
-        pnl = today["close"] / state_after["entry_price"] - 1
-        lines.append(f"Unrealized PnL: {pnl*100:.2f}%")
+    # --- マーケット指標 ---
+    lines.append("📊 マーケット指標")
+    lines.append(f"VIX       : {today['vix']:.2f}")
+    lines.append(f"SOXL RSI2 : {today['rsi2']:.2f}")
+    lines.append(f"QQQ vs MA200: {qqq_vs_200*100:+.2f}%  {'(>+0.5% ✅)' if qqq_filter else '(<+0.5% ❌)'}")
+    lines.append(f"SMH vs MA200: {smh_vs_200*100:+.2f}%")
+    lines.append(f"SMH vs MA150: {smh_vs_150*100:+.2f}%")
+    lines.append("")
+
+    # --- シグナル ---
+    lines.append("📡 シグナル状況")
+    lines.append(f"条件1(RSI2) : {yn(sig1)}  [VIX>=20, RSI2<6, SMH>MA200, QQQ>MA200+0.5%]")
+    lines.append(f"条件2(BB)   : {yn(sig2)}  [close<BB下限(20日,2.5σ), SMH>MA150]")
+    lines.append(f"条件3(SC)   : {yn(sig3)}  [VIX>=35, RSI2<10]")
+    lines.append(f"OR3シグナル : {yn(sig_or3)}")
+    lines.append("")
+
+    # --- アクション ---
+    lines.append("🏃 本日のアクション")
+    lines.append(f"Action : {action}")
+    lines.append(f"Reason : {action_reason}")
+    lines.append("")
+
+    # --- ポジション ---
+    lines.append("💼 ポジション状況")
+    pos = state_after["position"]
+    lines.append(f"現在ポジション: {pos}")
 
     if state_after.get("pending_entry") == "SOXL":
-        lines.append("Pending: ENTER_SOXL_NEXT_OPEN")
-
+        lines.append("⚠️ 翌日寄り: SOXL エントリー予約済み")
     if state_after.get("pending_exit_next_open"):
-        lines.append("Pending: EXIT_SOXL_NEXT_OPEN")
+        lines.append(f"⚠️ 翌日寄り: SOXL 売却予定（25日経過）")
+    lines.append("")
+
+    # --- SOXL保有中の詳細 ---
+    if pos == "SOXL" and state_after.get("entry_price"):
+        ep = float(state_after["entry_price"])
+        tp = ep * (1 + SOXL_TP)
+        sl = ep * (1 + SOXL_SL)
+        pnl = today["close"] / ep - 1
+        hd  = state_after.get("hold_days", 0)
+        lines.append("📈 SOXL保有情報")
+        lines.append(f"エントリー価格 : {ep:.2f}")
+        lines.append(f"エントリー日   : {state_after['entry_date']}")
+        lines.append(f"保有日数       : {hd} / {SOXL_MAX_HOLD}日")
+        lines.append(f"含み損益       : {pnl*100:+.2f}%")
+        lines.append(f"TP目標         : {tp:.2f} (+{SOXL_TP*100:.0f}%)")
+        lines.append(f"SL水準         : {sl:.2f} ({SOXL_SL*100:.0f}%)")
+        if hd >= SOXL_MAX_HOLD - 2:
+            lines.append(f"⚠️ 保有期限まで残り{SOXL_MAX_HOLD - hd}日")
+        lines.append("")
+
+    # --- Core Rotation ---
+    lines.append("🔄 Core Rotation")
+    lines.append(f"今月保有  : {cur_a1} + {cur_a2}")
+    lines.append(f"来月予定  : {next_a1} + {next_a2}")
+    if (cur_a1 != next_a1 or cur_a2 != next_a2):
+        lines.append("⚠️ 来月切り替えあり（月末リバランス）")
 
     return "\n".join(lines)
 
 # =========================
-# メイン判定
+# メイン
 # =========================
-
 def main():
-    df = fetch_data()
-
-    # 最新営業日
+    df    = fetch_data()
     today = df.iloc[-1]
     today_date = df.index[-1]
 
     state_before = load_state()
-    state_after = dict(state_before)
+    state_after  = dict(state_before)
 
-    action = "HOLD"
-    action_reason = "No change"
+    action        = "HOLD"
+    action_reason = "変化なし"
 
-    # -------------------------
-    # 1. core_position を更新
-    #    （QQQ/CASHヒステリシス）
-    # -------------------------
-    state_after["core_position"] = update_core_position(
-        qqq_price=float(today["qqq"]),
-        qqq_ma200=float(today["qqq_ma200"]),
-        current_core=state_before.get("core_position", "CASH"),
-        band=QQQ_BAND,
-    )
+    # --- Core Rotation計算 ---
+    cur_a1, cur_a2, next_a1, next_a2 = calc_core_rotation(df)
+    state_after["core_asset1"] = cur_a1
+    state_after["core_asset2"] = cur_a2
 
-    # -------------------------
-    # 2. 前日までに pending exit があれば、今日寄りで実行された扱い
-    # -------------------------
+    # --- 1. pending exit（25日経過による翌寄り売却）---
     if state_before.get("pending_exit_next_open", False):
-        state_after["position"] = state_after["core_position"]
-        state_after["entry_price"] = None
-        state_after["entry_date"] = None
-        state_after["hold_days"] = 0
+        state_after["position"]             = "CORE"
+        state_after["entry_price"]          = None
+        state_after["entry_date"]           = None
+        state_after["hold_days"]            = 0
         state_after["pending_exit_next_open"] = False
-        state_after["pending_exit_reason"] = None
+        state_after["pending_exit_reason"]  = None
+        action        = "SOXL売却実行（翌寄り）"
+        action_reason = "25日保有上限到達による翌日寄り売却を実行"
 
-        action = "EXECUTE_PENDING_EXIT"
-        action_reason = "Previous next-open exit executed"
-
-    # -------------------------
-    # 3. 前日までに pending entry があれば、今日寄りでSOXLエントリー
-    # -------------------------
+    # --- 2. pending entry（翌寄りエントリー実行）---
     entered_today = False
     if state_before.get("pending_entry") == "SOXL":
-        state_after["position"] = "SOXL"
+        state_after["position"]    = "SOXL"
         state_after["entry_price"] = float(today["open"])
-        state_after["entry_date"] = str(today_date.date())
-        state_after["hold_days"] = 1
-        state_after["pending_entry"] = None
+        state_after["entry_date"]  = str(today_date.date())
+        state_after["hold_days"]   = 1
+        state_after["pending_entry"]             = None
         state_after["pending_entry_signal_date"] = None
-
         entered_today = True
-        action = "EXECUTE_SOXL_ENTRY"
-        action_reason = "Previous signal executed at today's open"
+        action        = "SOXLエントリー実行（翌寄り）"
+        action_reason = f"前日シグナルによる本日寄り付きエントリー（open: {today['open']:.2f}）"
 
-    # -------------------------
-    # 4. SOXL保有中: exit判定優先
-    # -------------------------
-    if state_after["position"] == "SOXL" and state_after["entry_price"] is not None:
-        entry_price = float(state_after["entry_price"])
+    # --- 3. SOXL保有中のexit判定 ---
+    if state_after["position"] == "SOXL" and state_after.get("entry_price"):
+        ep = float(state_after["entry_price"])
+        hd = count_hold_days(df, state_after["entry_date"], today_date)
+        state_after["hold_days"] = hd
 
-        # 営業日数を再計算
-        hold_days = count_hold_days(df, state_after["entry_date"], today_date)
-        state_after["hold_days"] = hold_days
-
-        tp_price = entry_price * (1 + SOXL_TP)
-        sl_price = entry_price * (1 + SOXL_SL)
-
-        hit_tp = float(today["high"]) >= tp_price
-        hit_sl = float(today["low"]) <= sl_price
+        tp_px  = ep * (1 + SOXL_TP)
+        sl_px  = ep * (1 + SOXL_SL)
+        hit_tp = float(today["high"]) >= tp_px
+        hit_sl = float(today["low"])  <= sl_px
 
         if hit_tp and hit_sl:
-            # 同日両ヒットなら SL優先
-            action = "EXIT_SOXL"
-            action_reason = f"SL priority both hit (TP {tp_price:.2f}, SL {sl_price:.2f})"
-            state_after["position"] = state_after["core_position"]
-            state_after["entry_price"] = None
-            state_after["entry_date"] = None
-            state_after["hold_days"] = 0
-            state_after["pending_exit_next_open"] = False
-            state_after["pending_exit_reason"] = None
+            action        = "SOXL売却（SL優先）"
+            action_reason = f"同日TP/SL両ヒット → SL優先 (SL: {sl_px:.2f})"
+            state_after["position"]   = "CORE"
+            state_after["entry_price"] = state_after["entry_date"] = None
+            state_after["hold_days"]  = 0
 
         elif hit_sl:
-            action = "EXIT_SOXL"
-            action_reason = f"SL hit ({sl_price:.2f})"
-            state_after["position"] = state_after["core_position"]
-            state_after["entry_price"] = None
-            state_after["entry_date"] = None
-            state_after["hold_days"] = 0
-            state_after["pending_exit_next_open"] = False
-            state_after["pending_exit_reason"] = None
+            action        = "SOXL売却（SL）"
+            action_reason = f"SLヒット ({sl_px:.2f}) / 損失: {SOXL_SL*100:.0f}%"
+            state_after["position"]   = "CORE"
+            state_after["entry_price"] = state_after["entry_date"] = None
+            state_after["hold_days"]  = 0
 
         elif hit_tp:
-            action = "EXIT_SOXL"
-            action_reason = f"TP hit ({tp_price:.2f})"
-            state_after["position"] = state_after["core_position"]
-            state_after["entry_price"] = None
-            state_after["entry_date"] = None
-            state_after["hold_days"] = 0
-            state_after["pending_exit_next_open"] = False
-            state_after["pending_exit_reason"] = None
+            action        = "SOXL売却（TP）"
+            action_reason = f"TPヒット ({tp_px:.2f}) / 利益: +{SOXL_TP*100:.0f}%"
+            state_after["position"]   = "CORE"
+            state_after["entry_price"] = state_after["entry_date"] = None
+            state_after["hold_days"]  = 0
 
-        elif hold_days >= SOXL_MAX_HOLD:
-            # max_hold は翌営業日寄りで退出
-            action = "EXIT_SOXL_NEXT_OPEN"
-            action_reason = f"MAX_HOLD reached ({hold_days} days)"
+        elif hd >= SOXL_MAX_HOLD:
+            action        = "SOXL売却予約（25日経過）"
+            action_reason = f"保有{hd}日が上限{SOXL_MAX_HOLD}日に到達 → 翌日寄り売却予定"
             state_after["pending_exit_next_open"] = True
-            state_after["pending_exit_reason"] = action_reason
+            state_after["pending_exit_reason"]    = action_reason
 
         else:
-            # SOXL継続
             if entered_today:
-                action = "ENTER_SOXL"
-                action_reason = "SOXL position entered today"
+                action        = "SOXLエントリー完了"
+                action_reason = f"本日寄り付きエントリー済み（open: {today['open']:.2f}）"
             else:
-                action = "HOLD_SOXL"
-                action_reason = "SOXL position continues"
+                action        = "SOXL保有継続"
+                action_reason = f"保有{hd}日目 / TP: {tp_px:.2f} / SL: {sl_px:.2f}"
 
-    # -------------------------
-    # 5. SOXL非保有: 新規SOXLシグナル判定
-    # -------------------------
+    # --- 4. SOXL非保有: シグナル確認 ---
     if state_after["position"] != "SOXL":
-        if bool(today["sig_soxl"]):
-            # 翌営業日寄りで SOXL エントリー
-            state_after["pending_entry"] = "SOXL"
+        if bool(today["sig_or3"]):
+            state_after["pending_entry"]             = "SOXL"
             state_after["pending_entry_signal_date"] = str(today_date.date())
-            action = "ENTER_SOXL_NEXT_OPEN"
-            action_reason = "VIX>=20, RSI2<6, SMH>200MA"
 
+            # どの条件が発動したか
+            triggered = []
+            if bool(today["sig_base"]):
+                triggered.append("条件1(RSI2): VIX>=20, RSI2<6, SMH>MA200, QQQ>MA200+0.5%")
+            if bool(today["sig_bb"]):
+                triggered.append("条件2(BB): close<BB下限(2.5σ), SMH>MA150")
+            if bool(today["sig_sc"]):
+                triggered.append("条件3(SC): VIX>=35, RSI2<10")
+
+            action        = "SOXL エントリー予約（翌日寄り）"
+            action_reason = " / ".join(triggered)
         else:
-            # SOXLシグナルがないときは core_position に合わせる
-            target_core = state_after["core_position"]
+            action        = "CORE保有継続"
+            action_reason = f"シグナルなし / Core: {cur_a1}+{cur_a2}"
 
-            if state_after["position"] != target_core:
-                action = f"ROTATE_TO_{target_core}"
-                action_reason = "No SOXL signal; QQQ/CASH core rule applied"
-
-            state_after["position"] = target_core
-            state_after["entry_price"] = None
-            state_after["entry_date"] = None
-            state_after["hold_days"] = 0
-
-    # state保存
     save_state(state_after)
 
-    # 通知文作成
     msg = build_message(
         today=today,
-        state_before=state_before,
         state_after=state_after,
         action=action,
-        action_reason=action_reason
+        action_reason=action_reason,
+        cur_a1=cur_a1, cur_a2=cur_a2,
+        next_a1=next_a1, next_a2=next_a2,
     )
 
     print(msg)
     send_line(msg)
-
-    # GitHub に state.json を push
     push_state_to_github()
-
 
 if __name__ == "__main__":
     main()
