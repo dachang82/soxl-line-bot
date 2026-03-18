@@ -2,7 +2,7 @@ name: SOXL Strategy Daily Notify
 
 on:
   schedule:
-    - cron: '10 21 * * 1-5'   # UTC 21:10 = 冬時間 日本6:10（市場終了10分後）
+    - cron: '40 20 * * 1-5'   # UTC 20:40 = 冬時間 日本5:40（遅延込みで6-7時台想定）
   workflow_dispatch:            # 手動実行も可能
 
 jobs:
