@@ -153,6 +153,23 @@ def fetch_data() -> pd.DataFrame:
     ).fillna(False)
 
     df["sig_or3"] = (df["sig_base"] | df["sig_bb"] | df["sig_sc"]).fillna(False)
+    # 市場終了前ガード
+    # UTC21:00（冬時間の米国市場終了）より前に動いた場合、
+    # かつ最新データが今日のものならスキップ
+    now_utc     = pd.Timestamp.utcnow()
+    latest_date = df.index[-1].date()
+    today_utc   = now_utc.date()
+
+    if now_utc.hour < 21 and latest_date >= today_utc:
+        msg = (
+            f"⚠️ 市場終了前のため本日の送信をスキップします\n"
+            f"実行時刻(UTC): {now_utc.strftime('%H:%M')}\n"
+            f"最新データ日: {latest_date}"
+        )
+        print(msg)
+        send_line(msg)
+        raise SystemExit(0)
+        
     return df
 
 # =========================
