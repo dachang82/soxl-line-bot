@@ -1,12 +1,14 @@
 {
   "position": "CORE",
+  "sig_type": null,
   "entry_price": null,
   "entry_date": null,
   "hold_days": 0,
   "pending_entry": null,
   "pending_entry_signal_date": null,
+  "pending_entry_sig_type": null,
   "pending_exit_next_open": false,
   "pending_exit_reason": null,
-  "core_asset1": "GLD",
-  "core_asset2": "SMH"
+  "core_asset1": "",
+  "core_asset2": ""
 }
