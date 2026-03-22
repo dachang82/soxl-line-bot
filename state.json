@@ -9,6 +9,6 @@
   "pending_entry_sig_type": null,
   "pending_exit_next_open": false,
   "pending_exit_reason": null,
-  "core_asset1": "",
-  "core_asset2": ""
+  "core_asset1": "GLD",
+  "core_asset2": "SMH"
 }
