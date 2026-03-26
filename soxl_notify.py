@@ -200,7 +200,9 @@ def calc_core_rotation(df: pd.DataFrame):
     prices = df[["qqq","smh","xle","gld","vht"]].copy()
     prices.columns = CORE_TICKERS
     monthly = prices.resample("ME").last()
-    score   = monthly.pct_change(3) + monthly.pct_change(6)
+
+    # v8: 3M + 6M + 12M
+    score = monthly.pct_change(3) + monthly.pct_change(6) + monthly.pct_change(12)
 
     results = []
     for i in range(len(monthly)):
