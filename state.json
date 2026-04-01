@@ -3,12 +3,12 @@
   "sig_type": "bb",
   "entry_price": 42.880001068115234,
   "entry_date": "2026-03-31",
-  "hold_days": 1,
+  "hold_days": 2,
   "pending_entry": null,
   "pending_entry_signal_date": null,
   "pending_entry_sig_type": null,
   "pending_exit_next_open": false,
   "pending_exit_reason": null,
-  "core_asset1": "GLD",
+  "core_asset1": "XLE",
   "core_asset2": "SMH"
 }
