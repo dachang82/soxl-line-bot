@@ -3,7 +3,7 @@
   "sig_type": "bb",
   "entry_price": 42.880001068115234,
   "entry_date": "2026-03-31",
-  "hold_days": 4,
+  "hold_days": 5,
   "pending_entry": null,
   "pending_entry_signal_date": null,
   "pending_entry_sig_type": null,
