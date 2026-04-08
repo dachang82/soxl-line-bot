@@ -28,7 +28,7 @@ PARAMS = {
     "sc":          {"tp": 0.30, "sl": -0.15, "hold": 15},
     "or4":         {"tp": 0.18, "sl": -0.15, "hold": 15},
     "TREND":       {"tp": 0.14, "sl": -0.14, "hold": 10},
-    "TREND_GC":    {"tp": 0.20, "sl": -0.15, "hold": 20},
+    "TREND_GC":    {"tp": 0.20, "sl": -0.12, "hold": 20},
     "SOXS_BB":     {"tp": 0.18, "sl": -0.07, "hold": 6},
     "SOXS_MA":     {"tp": 0.12, "sl": -0.07, "hold": 6},
 }
