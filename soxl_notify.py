@@ -1,8 +1,9 @@
 # ============================================================
-# SOXL Strategy v13 - GitHub Actions + LINE通知
+# SOXL Strategy v14 - GitHub Actions + LINE通知
 # Core: QQQ/SMH/XLE/GLD/VHT rotation (3M+6M+12M, top2)
 # SOXL: V9(OR3+OR4) + TREND + TREND_GC(OBV)
-# SOXS: SOXS_BB + SOXS_MA
+# SOXS: SOXS_BB + SOXS_MA (v14 新・黄金比 + 2重防衛システム)
+# Sub : SOXL先読み戦略 (完全独立管理)
 # ============================================================
 
 import os
@@ -20,7 +21,7 @@ import yfinance as yf
 START          = "2015-01-01"
 QQQ_GAP_BASE   = 0.010
 
-# 条件別TP/SL/hold（v13確定値）
+# 条件別TP/SL/hold（v14確定値 + サブ口座）
 PARAMS = {
     "base_normal": {"tp": 0.26, "sl": -0.15, "hold": 30},
     "base_alert":  {"tp": 0.26, "sl": -0.09, "hold": 30},
@@ -30,7 +31,8 @@ PARAMS = {
     "TREND":       {"tp": 0.14, "sl": -0.14, "hold": 10},
     "TREND_GC":    {"tp": 0.20, "sl": -0.12, "hold": 20},
     "SOXS_BB":     {"tp": 0.18, "sl": -0.07, "hold": 6},
-    "SOXS_MA":     {"tp": 0.12, "sl": -0.07, "hold": 6},
+    "SOXS_MA":     {"tp": 0.10, "sl": -0.10, "hold": 6},
+    "SNIPER":      {"tp": 0.16, "sl": -0.10, "hold": 20}, # サブ口座(先読み)用
 }
 
 CORE_TICKERS       = ["QQQ", "SMH", "XLE", "GLD", "VHT"]
@@ -92,6 +94,13 @@ def load_state() -> dict:
         "pending_exit_reason":       None,
         "core_asset1":               "",
         "core_asset2":               "",
+        "last_soxs_ma_sl_date":      None,
+        # --- サブ口座(先読み)用 独立ステータス ---
+        "sniper_pos":                False,
+        "sniper_ep":                 None,
+        "sniper_ed":                 None,
+        "sniper_pending_entry":      False,
+        "sniper_pending_exit":       False,
     }
     if not os.path.exists(STATE_PATH):
         return default
@@ -131,9 +140,11 @@ def fetch_data() -> pd.DataFrame:
            for k, v in tickers.items()}
 
     df = pd.DataFrame(index=raw["SOXL"].index)
-    for c in ["Open", "High", "Low", "Close"]:
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
         df[c.lower()] = raw["SOXL"][c]
-        df[f"soxs_{c.lower()}"] = raw["SOXS"][c]
+        if c in ["Open", "High", "Low", "Close"]:
+            df[f"soxs_{c.lower()}"] = raw["SOXS"][c]
+            
     for c in ["QQQ", "SMH", "XLE", "GLD", "VHT", "VIX", "VVIX"]:
         df[c.lower()] = raw[c]["Close"]
         
@@ -160,21 +171,28 @@ def fetch_data() -> pd.DataFrame:
     df["bb_lower"] = df["bb_mid"] - 2.5 * df["bb_sigma"]
     df["bb_z"]     = (df["close"] - df["bb_mid"]) / df["bb_sigma"]
     
-    # SOXSシグナル用 (SOXLチャートベース)
     df["bb40_mid"]   = df["close"].rolling(40).mean()
     df["bb40_std"]   = df["close"].rolling(40).std(ddof=0)
     df["bb40_upper"] = df["bb40_mid"] + 2.8 * df["bb40_std"]
     df["ma75"]       = df["close"].rolling(75).mean()
     df["ma75_dev"]   = df["close"] / df["ma75"] - 1.0
     
+    # v14 SOXS MA ロジック
     candle_range = (df["high"] - df["low"]).replace(0, np.nan)
     df["prev_upper_wick_ratio"] = ((df["high"] - np.maximum(df["open"], df["close"])) / candle_range).clip(lower=0).shift(1)
+    df["t1_upper_wick_ratio"]   = ((df["high"] - np.maximum(df["open"], df["close"])) / candle_range).clip(lower=0)
+    
     df["smh_ma_20"] = df["smh"].rolling(20).mean()
     df["smh_ma_50"] = df["smh"].rolling(50).mean()
 
+    # サブ口座 (SOXL先読み) 用
+    df["soxl_ma_20"] = df["close"].rolling(20).mean()
+    df["soxl_ma_50"] = df["close"].rolling(50).mean()
+    df["soxl_dist"]  = (df["soxl_ma_20"] - df["soxl_ma_50"]) / df["soxl_ma_50"]
+
     df = df.dropna().copy()
 
-    # === シグナル定義 ===
+    # === シグナル定義 (メイン口座) ===
     cond_base = (df["vix"] >= 20) & (df["rsi2"] < 6) & (df["qqq"] > df["qqq_ma200"] * (1 + QQQ_GAP_BASE))
     cond_alert = (df["vix_ret5"] >= 0.15) & (df["vix_ret5"] <= 0.40) & (df["vvix_ret5"] >= 0.05) & (df["vvix_ret5"] <= 0.25)
     
@@ -201,7 +219,18 @@ def fetch_data() -> pd.DataFrame:
     df["sig_trend_gc"] = cond_gc & ~(df["sig_or3"] | df["sig_or4"] | df["sig_trend_best"])
     
     df["sig_soxs_bb"] = (df["close"] >= df["bb40_upper"])
-    df["sig_soxs_ma"] = (df["ma75_dev"] >= 0.40) & (df["prev_upper_wick_ratio"] >= 0.10)
+    
+    SOXS_T1_WICK_TH = 0.05
+    df["sig_soxs_ma"] = ((df["ma75_dev"] >= 0.40) & 
+                         (df["prev_upper_wick_ratio"] >= 0.10) &
+                         (df["t1_upper_wick_ratio"] >= SOXS_T1_WICK_TH))
+
+    # === シグナル定義 (サブ口座: SOXL先読み) ===
+    df["sig_sniper"] = ((df["soxl_ma_20"] < df["soxl_ma_50"]) &
+                        (df["soxl_dist"] > -0.004) &
+                        (df["close"] > df["soxl_ma_20"]) &
+                        (df["vix"] < 20) &
+                        (df["smh_obv"] > df["smh_obv_ma20"])).fillna(False)
     
     # 市場終了前ガード
     now_utc     = pd.Timestamp.utcnow()
@@ -227,7 +256,6 @@ def calc_core_rotation(df: pd.DataFrame):
     prices.columns = CORE_TICKERS
     monthly = prices.resample("ME").last()
 
-    # v13: 3M + 6M + 12M
     score = monthly.pct_change(3) + monthly.pct_change(6) + monthly.pct_change(12)
 
     results = []
@@ -275,14 +303,14 @@ def count_hold_days(df, entry_date, current_date) -> int:
 # 通知メッセージ生成
 # =========================
 def build_message(today, state_after, action, action_reason,
-                  cur_a1, cur_a2, next_a1, next_a2) -> str:
+                  cur_a1, cur_a2, next_a1, next_a2, soxs_ma_locked, lock_days_passed, df, today_date,
+                  sniper_action, sniper_reason) -> str:
 
     date_str    = str(today.name.date())
     qqq_vs_200  = today["qqq"] / today["qqq_ma200"] - 1
     smh_vs_200  = today["smh"] / today["smh_ma200"] - 1
     qqq_filter  = today["qqq"] > today["qqq_ma200"] * (1 + QQQ_GAP_BASE)
     
-    # v13 indicators
     vix_r5 = today["vix_ret5"]
     vvix_r5 = today["vvix_ret5"]
     obv_vs_ma = today["smh_obv"] > today["smh_obv_ma20"]
@@ -290,22 +318,41 @@ def build_message(today, state_after, action, action_reason,
     def yn(b): return "✅" if b else "❌"
 
     lines = []
-    lines.append(f"【SOXL戦略 v13 日次レポート {date_str}】")
+    lines.append(f"【SOXL戦略 v14 日次レポート {date_str}】")
     lines.append("")
 
     # マーケット指標
     lines.append("📊 マーケット指標")
-    lines.append(f"VIX       : {today['vix']:.2f} (5日 {vix_r5*100:+.1f}%)")
-    lines.append(f"VVIX      : {today['vvix']:.2f} (5日 {vvix_r5*100:+.1f}%)")
-    lines.append(f"SOXL RSI2 : {today['rsi2']:.2f}")
-    lines.append(f"SOXL bb_z : {today['bb_z']:.2f}")
-    lines.append(f"QQQ vs 200: {qqq_vs_200*100:+.2f}% {'(>+1.0% ✅)' if qqq_filter else '(<+1.0% ❌)'}")
-    lines.append(f"SMH vs 200: {smh_vs_200*100:+.2f}%")
-    lines.append(f"SMH OBV   : {yn(obv_vs_ma)} (>MA20)")
+    lines.append(f"VIX        : {today['vix']:.2f} (5日 {vix_r5*100:+.1f}%)")
+    lines.append(f"VVIX       : {today['vvix']:.2f} (5日 {vvix_r5*100:+.1f}%)")
+    lines.append(f"SOXL RSI2  : {today['rsi2']:.2f}")
+    lines.append(f"SOXL bb_z  : {today['bb_z']:.2f}")
+    lines.append(f"QQQ vs 200 : {qqq_vs_200*100:+.2f}% {'(>+1.0% ✅)' if qqq_filter else '(<+1.0% ❌)'}")
+    lines.append(f"SMH vs 200 : {smh_vs_200*100:+.2f}%")
+    lines.append(f"SMH OBV    : {yn(obv_vs_ma)} (>MA20)")
     lines.append("")
 
-    # シグナル状況
-    lines.append("📡 シグナル状況")
+    # === サブ口座 (SOXL先読み) ===
+    lines.append("🎯 サブ口座 (SOXL先読み)")
+    lines.append(f"シグナル : {yn(today['sig_sniper'])}")
+    lines.append(f"Action   : {sniper_action}")
+    if sniper_action != "なし":
+        lines.append(f"Reason   : {sniper_reason}")
+
+    if state_after.get("sniper_pos") and state_after.get("sniper_ep"):
+        s_ep = float(state_after["sniper_ep"])
+        s_hd = count_hold_days(df, state_after["sniper_ed"], today_date)
+        s_pnl = (today["close"] / s_ep) - 1
+        lines.append(f"📈 保有中: {s_ep:.2f}買付 (保有{s_hd}/20日) 含み損益 {s_pnl*100:+.2f}%")
+        lines.append(f"   TP目標: {s_ep*1.16:.2f} (+16%) / SL水準: {s_ep*0.90:.2f} (-10%)")
+    elif state_after.get("sniper_pending_entry"):
+        lines.append("⚠️ 翌日寄り: SOXLエントリー予約済み (先読みシグナル)")
+    elif state_after.get("sniper_pending_exit"):
+        lines.append("⚠️ 翌日寄り: SOXL売却予定 (保有期限20日到達)")
+    lines.append("")
+
+    # シグナル状況 (メイン口座)
+    lines.append("📡 メイン口座 シグナル")
     lines.append(f"OR3(V9) : {yn(today['sig_or3'])}")
     if bool(today['sig_base_alert']):
         lines.append(f" └ Base(Alert) ✅")
@@ -320,17 +367,21 @@ def build_message(today, state_after, action, action_reason,
     lines.append(f"TREND   : {yn(today['sig_trend_best'])}")
     lines.append(f"TREND_GC: {yn(today['sig_trend_gc'])}")
     lines.append(f"SOXS_BB : {yn(today['sig_soxs_bb'])}")
-    lines.append(f"SOXS_MA : {yn(today['sig_soxs_ma'])}")
+    
+    sig_soxs_ma_text = yn(today['sig_soxs_ma']) if not soxs_ma_locked else "❌ (条件満たすもガード)"
+    lines.append(f"SOXS_MA : {sig_soxs_ma_text}")
+    if soxs_ma_locked:
+        lines.append(f" └ 🔒 防衛ロック中 (解除まであと{4 - lock_days_passed}日)")
     lines.append("")
 
-    # アクション
-    lines.append("🏃 本日のアクション")
+    # アクション (メイン口座)
+    lines.append("🏃 メイン口座 アクション")
     lines.append(f"Action : {action}")
     lines.append(f"Reason : {action_reason}")
     lines.append("")
 
-    # ポジション
-    lines.append("💼 ポジション状況")
+    # ポジション (メイン口座)
+    lines.append("💼 メイン口座 ポジション")
     pos = state_after["position"]
     lines.append(f"現在ポジション: {pos}")
     if state_after.get("pending_entry"):
@@ -345,7 +396,6 @@ def build_message(today, state_after, action, action_reason,
         lines.append(f"⚠️ 翌日寄り: {pos}売却予定（保有上限等）")
     lines.append("")
 
-    # 保有中の詳細
     if pos in ["SOXL", "SOXS"] and state_after.get("entry_price"):
         ep      = float(state_after["entry_price"])
         sig_t   = state_after.get("sig_type", "base_normal")
@@ -366,7 +416,7 @@ def build_message(today, state_after, action, action_reason,
         lines.append(f"TP目標        : {tp_val:.2f} (+{int(p['tp']*100)}%)")
         lines.append(f"SL水準        : {sl_val:.2f} ({int(p['sl']*100)}%)")
         if hd >= max_hd - 2:
-            lines.append(f"⚠️ 保有期限まで残り{max_hd - hd}日")
+            lines.append(f"⚠️ 保休期限まで残り{max_hd - hd}日")
         lines.append("")
 
     # Core Rotation
@@ -386,13 +436,92 @@ def main():
     today      = df.iloc[-1]
     today_date = df.index[-1]
 
-    # VIXガード適用 (SOXS_MA)
-    if float(today["vix"]) >= 20.0:
-        df.loc[df.index[-1], "sig_soxs_ma"] = False
-        today = df.iloc[-1]
-
     state_before = load_state()
     state_after  = dict(state_before)
+
+    # ----------------------------------------------------
+    # サブ口座 (SOXL先読み) の処理
+    # ----------------------------------------------------
+    sniper_action = "なし"
+    sniper_reason = "変化なし"
+    
+    # 1. 翌寄り売却（期限到達時）
+    if state_before.get("sniper_pending_exit"):
+        exit_px = today["open"]
+        ep = state_before.get("sniper_ep", exit_px)
+        ret = exit_px / ep - 1
+        state_after["sniper_pos"] = False
+        state_after["sniper_ep"] = None
+        state_after["sniper_ed"] = None
+        state_after["sniper_pending_exit"] = False
+        sniper_action = "SOXL売却完了"
+        sniper_reason = f"保有上限到達による寄り付き売却 (損益: {ret*100:+.2f}%)"
+
+    # 2. 翌寄りエントリー実行
+    elif state_before.get("sniper_pending_entry"):
+        state_after["sniper_pos"] = True
+        state_after["sniper_ep"] = float(today["open"])
+        state_after["sniper_ed"] = str(today_date.date())
+        state_after["sniper_pending_entry"] = False
+        sniper_action = "SOXL買付完了"
+        sniper_reason = f"前日シグナルによる寄り付き買付 (Open: {today['open']:.2f})"
+
+    # 3. 保有中の出口判定 (TP/SL/TIME)
+    elif state_after.get("sniper_pos") and state_after.get("sniper_ep"):
+        ep = float(state_after["sniper_ep"])
+        hd = count_hold_days(df, state_after["sniper_ed"], today_date)
+        tp_px = ep * (1 + PARAMS["SNIPER"]["tp"])
+        sl_px = ep * (1 + PARAMS["SNIPER"]["sl"])
+        
+        hit_tp = today["high"] >= tp_px
+        hit_sl = today["low"] <= sl_px
+
+        if hit_tp and hit_sl:
+            sniper_action = "SOXL売却 (SL優先)"
+            sniper_reason = "同日TP/SL両ヒット → SL優先"
+            state_after["sniper_pos"] = False
+            state_after["sniper_ep"] = state_after["sniper_ed"] = None
+        elif hit_sl:
+            sniper_action = "SOXL売却 (SL)"
+            sniper_reason = f"損切り水準到達 ({sl_px:.2f})"
+            state_after["sniper_pos"] = False
+            state_after["sniper_ep"] = state_after["sniper_ed"] = None
+        elif hit_tp:
+            sniper_action = "SOXL売却 (TP)"
+            sniper_reason = f"利確水準到達 ({tp_px:.2f})"
+            state_after["sniper_pos"] = False
+            state_after["sniper_ep"] = state_after["sniper_ed"] = None
+        elif hd >= PARAMS["SNIPER"]["hold"]:
+            sniper_action = "SOXL売却予約 (期限)"
+            sniper_reason = f"保有{hd}日到達 → 翌寄り売却"
+            state_after["sniper_pending_exit"] = True
+        else:
+            sniper_action = "SOXL保有継続"
+            sniper_reason = f"保有{hd}日目"
+
+    # 4. 新規シグナルの検出 (ポジションなし時)
+    if not state_after.get("sniper_pos") and not state_after.get("sniper_pending_entry") and not state_after.get("sniper_pending_exit"):
+        if bool(today["sig_sniper"]):
+            state_after["sniper_pending_entry"] = True
+            sniper_action = "SOXLエントリー予約"
+            sniper_reason = "先読みシグナル点灯 → 翌寄り買付"
+
+
+    # ----------------------------------------------------
+    # メイン口座の処理 (V14)
+    # ----------------------------------------------------
+    lock_days_passed = 0
+    soxs_ma_locked = False
+    if state_before.get("last_soxs_ma_sl_date"):
+        lock_days_passed = count_hold_days(df, state_before["last_soxs_ma_sl_date"], today_date) - 1
+        if lock_days_passed <= 3:
+            soxs_ma_locked = True
+        else:
+            state_after["last_soxs_ma_sl_date"] = None
+
+    if float(today["vix"]) >= 20.0 or soxs_ma_locked:
+        df.loc[df.index[-1], "sig_soxs_ma"] = False
+        today = df.iloc[-1]
 
     action        = "HOLD"
     action_reason = "変化なし"
@@ -401,7 +530,6 @@ def main():
     state_after["core_asset1"] = cur_a1
     state_after["core_asset2"] = cur_a2
 
-    # --- 1. pending exit（保有上限等による翌寄り売却）---
     if state_before.get("pending_exit_next_open", False):
         asset = state_after["position"]
         exit_px = today["open"] if asset == "SOXL" else today["soxs_open"]
@@ -418,7 +546,6 @@ def main():
         action        = f"{asset}売却実行（翌寄り）"
         action_reason = f"保有上限到達による翌日寄り売却 (Open: {exit_px:.2f}, 損益: {trade_ret*100:+.2f}%)"
 
-    # --- 2. pending entry（翌寄りエントリー実行）---
     entered_today = False
     if state_before.get("pending_entry"):
         asset_to_enter = state_before.get("pending_entry")
@@ -437,7 +564,6 @@ def main():
         action        = f"{asset_to_enter}エントリー実行（翌寄り）"
         action_reason = f"前日シグナル[{sig_t}]による本日寄り付きエントリー (open: {entry_px:.2f})"
 
-    # --- 3. 保有中のexit判定 ---
     if state_after["position"] in ["SOXL", "SOXS"] and state_after.get("entry_price"):
         pos   = state_after["position"]
         ep    = float(state_after["entry_price"])
@@ -446,7 +572,6 @@ def main():
         hd    = count_hold_days(df, state_after["entry_date"], today_date)
         state_after["hold_days"] = hd
 
-        # 対象アセットのデータを取得
         t_h = float(today["high"]) if pos == "SOXL" else float(today["soxs_high"])
         t_l = float(today["low"])  if pos == "SOXL" else float(today["soxs_low"])
 
@@ -462,6 +587,9 @@ def main():
             state_after["sig_type"]    = None
             state_after["entry_price"] = state_after["entry_date"] = None
             state_after["hold_days"]   = 0
+            if pos == "SOXS" and sig_t == "SOXS_MA":
+                state_after["last_soxs_ma_sl_date"] = str(today_date.date())
+                action_reason += " ⚠️ SOXS_MA防衛発動: 以降3営業日ロック"
 
         elif hit_sl:
             action        = f"{pos}売却（SL）"
@@ -470,6 +598,9 @@ def main():
             state_after["sig_type"]    = None
             state_after["entry_price"] = state_after["entry_date"] = None
             state_after["hold_days"]   = 0
+            if pos == "SOXS" and sig_t == "SOXS_MA":
+                state_after["last_soxs_ma_sl_date"] = str(today_date.date())
+                action_reason += " ⚠️ SOXS_MA防衛発動: 以降3営業日ロック"
 
         elif hit_tp:
             action        = f"{pos}売却（TP）"
@@ -493,7 +624,6 @@ def main():
                 action        = f"{pos}保有継続"
                 action_reason = f"保有{hd}日目 [{sig_t}] / TP: {tp_px:.2f} / SL: {sl_px:.2f}"
 
-    # --- 4. シグナル確認 (優先順位: V9 > TREND > TREND_GC > SOXS) ---
     v9_sig    = bool(today["sig_or3"]) or bool(today["sig_or4"])
     trend_sig = bool(today["sig_trend_best"])
     gc_sig    = bool(today["sig_trend_gc"])
@@ -541,7 +671,6 @@ def main():
             action_reason = f"シグナルなし / Core: {cur_a1}+{cur_a2}"
 
     elif state_after["position"] == "SOXS":
-        # SOXS保有中に上位のSOXLシグナルが出たらドテン（スイッチ）
         if v9_sig or trend_sig or gc_sig:
             sig_t = "TREND"
             if v9_sig: sig_t = get_v9_sig_type(today)
@@ -563,6 +692,11 @@ def main():
         action_reason=action_reason,
         cur_a1=cur_a1, cur_a2=cur_a2,
         next_a1=next_a1, next_a2=next_a2,
+        soxs_ma_locked=soxs_ma_locked,
+        lock_days_passed=lock_days_passed,
+        df=df, today_date=today_date,
+        sniper_action=sniper_action, 
+        sniper_reason=sniper_reason
     )
 
     print(msg)
