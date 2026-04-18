@@ -10,5 +10,11 @@
   "pending_exit_next_open": false,
   "pending_exit_reason": null,
   "core_asset1": "XLE",
-  "core_asset2": "SMH"
+  "core_asset2": "SMH",
+  "last_soxs_ma_sl_date": null,
+  "sniper_pos": false,
+  "sniper_ep": null,
+  "sniper_ed": null,
+  "sniper_pending_entry": false,
+  "sniper_pending_exit": false
 }
