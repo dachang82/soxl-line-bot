@@ -9,12 +9,12 @@ jobs:
   notify:
     runs-on: ubuntu-latest
 
-    # 【重要】Node.js 20 廃止警告に対応するための設定
+    # Node.js 20 廃止警告に対応
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     permissions:
-      contents: write   # state.jsonの更新・GitHubへの保存に必須
+      contents: write   # state.jsonの更新に必須
 
     steps:
       - name: Checkout
@@ -26,14 +26,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        # V15で追加された可視化（グラフ作成）に必要な matplotlib を含めています
-        run: pip install yfinance pandas numpy requests matplotlib
+        # 【重要】エラー解消のため ipython を追加しました
+        run: pip install yfinance pandas numpy requests matplotlib ipython
 
       - name: Run strategy
         env:
-          # GitHubのSettings > Secrets で設定したトークンを呼び出します
           LINE_TOKEN:         ${{ secrets.LINE_TOKEN }}
           GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY:  ${{ github.repository }}
-        # 実行するファイル名が soxl_notify.py であることを確認してください
+        # 実行ファイル名が soxl_notify.py であることを確認してください
         run: python soxl_notify.py
