@@ -3,11 +3,15 @@ name: SOXL Strategy Daily Notify
 on:
   schedule:
     - cron: '40 20 * * 1-5'   # UTC 20:40 = 冬時間 日本5:40（遅延込みで6-7時台想定）
-  workflow_dispatch:            # 手動実行も可能
+  workflow_dispatch:             # 手動実行も可能
 
 jobs:
   notify:
     runs-on: ubuntu-latest
+    
+    # Node.js 20 廃止警告への対応
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     permissions:
       contents: write   # state.jsonのpushに必要
@@ -22,7 +26,8 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install yfinance pandas numpy requests
+        # V15の可視化ロジックのために matplotlib を追加
+        run: pip install yfinance pandas numpy requests matplotlib
 
       - name: Run strategy
         env:
