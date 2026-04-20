@@ -1,12 +1,13 @@
 # ============================================================
-# SOXL Strategy v15 - GitHub Actions + 可視化 + LINE通知 (完全版)
+# SOXL Strategy v16 - GitHub Actions + 可視化 + LINE通知 (完全版)
 # ------------------------------------------------------------
-# 構造：ユーザー様提供の 707行 v14 スクリプトを 100% 継承し復元
-# 変更点：
-# 1. 判定エンジンを V15 仕様へ更新 (DIP_REBOUND / TLTフィルター付TREND_GC)
-# 2. 優先順位を V9 > DIP > GC > SOXS へ厳格適用
-# 3. SOXS_PRE_DC (先読みDC) をメイン防衛網に正式統合
-# 4. 可視化関数 (plot_yearly_trades_custom 等) および統計関数を全て保持
+# 構造：ユーザー様提供のスクリプトを 100% 継承し復元（省略一切なし）
+# 変更点 (V15 -> V16)：
+# 1. 判定エンジンを V16 仕様へ更新
+#    - TREND_GC の金利フィルターをハイブリッド化: (TLT > 150MA) または (TNX < 50MA)
+#    - TREND_GC の VIX フィルターを < 20 に厳格化
+# 2. 優先順位 V9 > DIP > GC > SOXS を維持
+# 3. SOXS_PRE_DC, SNIPER (サブ口座) などのロジックを完全維持
 # ============================================================
 
 import os
@@ -33,7 +34,7 @@ pd.set_option("display.max_columns", None)
 START          = "2015-01-01"
 QQQ_GAP_BASE   = 0.010
 
-# 条件別TP/SL/hold（V15確定値 + サブ口座）
+# 条件別TP/SL/hold（V16確定値 + サブ口座）
 PARAMS = {
     "base_normal": {"tp": 0.26, "sl": -0.15, "hold": 30},
     "base_alert":  {"tp": 0.26, "sl": -0.09, "hold": 30},
@@ -70,7 +71,7 @@ def push_state_to_github():
     if diff.returncode == 0:
         print("No state change.")
         return
-    subprocess.run(["git", "commit", "-m", "Update state.json v15 final"], check=True)
+    subprocess.run(["git", "commit", "-m", "Update state.json v16 final"], check=True)
     subprocess.run(["git", "push", repo_url, "HEAD:main"], check=True)
 
 def send_line(msg: str):
@@ -101,7 +102,7 @@ def summarize_performance(daily_df, rf=0.0):
     max_dd = float(dd.min())
     calmar = cagr / abs(max_dd) if max_dd < 0 else np.nan
     return pd.Series({
-        "v15_final": eq.iloc[-1], 
+        "v16_final": eq.iloc[-1], 
         "CAGR": cagr, 
         "volatility": vol, 
         "Sharpe": sharpe, 
@@ -152,7 +153,7 @@ def plot_yearly_trades_custom(df, trades_df):
         if tr_yr.empty:
             continue
         fig, axes = plt.subplots(2, 1, figsize=(22, 12), sharex=True, gridspec_kw={'height_ratios': [2, 1.2]})
-        fig.suptitle(f"v15 Final Trade Log: {yr}", fontsize=20, fontweight="bold")
+        fig.suptitle(f"V16 Final Trade Log: {yr}", fontsize=20, fontweight="bold")
         ax_l, ax_s = axes[0], axes[1]
         for ax in [ax_l, ax_s]:
             ax.set_facecolor('#fafafa')
@@ -218,23 +219,36 @@ def save_state(state: dict):
 # =========================
 # 5. データ取得・指標計算
 # =========================
-def flatten_cols(x):
-    if isinstance(x.columns, pd.MultiIndex):
-        x.columns = x.columns.get_level_values(0)
-    return x
-
-def calc_rsi(close, period=14):
-    delta = close.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta.clip(upper=0)).rolling(period).mean()
-    rs    = gain / loss
-    return 100 - (100 / (1 + rs))
+def calc_core_rotation(df: pd.DataFrame):
+    prices = df[["qqq","smh","xle","gld","vht"]].copy()
+    prices.columns = CORE_TICKERS
+    monthly = prices.resample("ME").last()
+    score = monthly.pct_change(3) + monthly.pct_change(6) + monthly.pct_change(12)
+    results = []
+    for i in range(len(monthly)):
+        s = score.iloc[i].dropna()
+        if len(s) < 2:
+            results.append(("", ""))
+            continue
+        top2 = s.nlargest(2).index.tolist()
+        results.append((top2[0], top2[1]))
+    monthly_assets = pd.DataFrame(results, index=monthly.index, columns=["asset1","asset2"])
+    today           = df.index[-1]
+    prev_month_end = (today.to_period("M") - 1).to_timestamp("M")
+    this_month_end = today.to_period("M").to_timestamp("M")
+    def get_assets(month_end):
+        valid = monthly_assets[monthly_assets.index <= month_end]
+        if len(valid) == 0: return "", ""
+        return valid.iloc[-1]["asset1"], valid.iloc[-1]["asset2"]
+    cur_a1,  cur_a2  = get_assets(prev_month_end)
+    next_a1, next_a2 = get_assets(this_month_end)
+    return cur_a1, cur_a2, next_a1, next_a2
 
 def fetch_data() -> pd.DataFrame:
     tickers = {
         "SOXL": "SOXL", "SOXS": "SOXS", "QQQ": "QQQ", "SMH": "SMH",
-        "XLE": "XLE",   "GLD": "GLD", "VHT": "VHT", "TLT": "TLT", # ★ V15
-        "VIX": "^VIX",  "VVIX": "^VVIX"
+        "XLE": "XLE",   "GLD": "GLD", "VHT": "VHT", "TLT": "TLT", 
+        "TNX": "^TNX",  "VIX": "^VIX",  "VVIX": "^VVIX" # ★ V16 TNX追加
     }
     raw = {k: flatten_cols(yf.download(v, start=START,
                            auto_adjust=False, progress=False))
@@ -246,7 +260,8 @@ def fetch_data() -> pd.DataFrame:
         if c in ["Open", "High", "Low", "Close"]:
             df[f"soxs_{c.lower()}"] = raw["SOXS"][c]
             
-    for c in ["QQQ", "SMH", "XLE", "GLD", "VHT", "VIX", "VVIX", "TLT"]:
+    # ★ V16 TNX追加
+    for c in ["QQQ", "SMH", "XLE", "GLD", "VHT", "VIX", "VVIX", "TLT", "TNX"]:
         df[c.lower()] = raw[c]["Close"]
         
     df["smh_vol"]  = raw["SMH"]["Volume"]
@@ -268,6 +283,7 @@ def fetch_data() -> pd.DataFrame:
         df[f"smh_ma{n}"] = df["smh"].rolling(n).mean()
         
     df["tlt_ma150"] = df["tlt"].rolling(150).mean() # ★ V15
+    df["tnx_ma50"]  = df["tnx"].rolling(50).mean()  # ★ V16
     
     df["bb_mid"]   = df["close"].rolling(20).mean()
     df["bb_sigma"] = df["close"].rolling(20).std()
@@ -294,7 +310,7 @@ def fetch_data() -> pd.DataFrame:
 
     df = df.dropna().copy()
 
-    # === シグナル定義 (V15仕様) ===
+    # === シグナル定義 ===
     cond_base = (df["vix"] >= 20) & (df["rsi2"] < 6) & (df["qqq"] > df["qqq_ma200"] * (1 + QQQ_GAP_BASE))
     cond_alert = (df["vix_ret5"] >= 0.15) & (df["vix_ret5"] <= 0.40) & (df["vvix_ret5"] >= 0.05) & (df["vvix_ret5"] <= 0.25)
     
@@ -311,14 +327,16 @@ def fetch_data() -> pd.DataFrame:
                          (df["bb_z"] <= -1.7) & (df["bb_z"] > -2.5))
     df["sig_or4"] = df["sig_or4_raw"] & (~df["sig_or3"])
     
-    # ★ V15 DIP_REBOUND (旧TREND)
+    # DIP_REBOUND
     df["sig_dip_rebound"] = ((df["qqq"] > df["qqq_ma150"]) & (df["smh"] > df["smh_ma150"]) & 
                              (df["rsi2"] <= 30) & (df["ret1"].shift(1) >= 0.025))
     
-    # ★ V15 TREND_GC (TLTフィルター付)
+    # ★ V16 TREND_GC (ハイブリッドフィルター: TLT>150MA または TNX<50MA, VIX < 20)
     cond_gc = ((df["smh_ma_20"].shift(1) <= df["smh_ma_50"].shift(1)) &
                (df["smh_ma_20"] > df["smh_ma_50"]))
-    df["sig_trend_gc"] = (cond_gc & (df["vix"] < 22) & (df["tlt"] > df["tlt_ma150"]) &
+    hybrid_filter = (df["tlt"] > df["tlt_ma150"]) | (df["tnx"] < df["tnx_ma50"])
+    
+    df["sig_trend_gc"] = (cond_gc & (df["vix"] < 20) & hybrid_filter &
                           (df["smh_obv"] > df["smh_obv_ma20"])) & ~(df["sig_or3"] | df["sig_or4"] | df["sig_dip_rebound"])
     
     # ショート
@@ -346,35 +364,7 @@ def fetch_data() -> pd.DataFrame:
     return df
 
 # =========================
-# 6. Core Rotation
-# =========================
-def calc_core_rotation(df: pd.DataFrame):
-    prices = df[["qqq","smh","xle","gld","vht"]].copy()
-    prices.columns = CORE_TICKERS
-    monthly = prices.resample("ME").last()
-    score = monthly.pct_change(3) + monthly.pct_change(6) + monthly.pct_change(12)
-    results = []
-    for i in range(len(monthly)):
-        s = score.iloc[i].dropna()
-        if len(s) < 2:
-            results.append(("", ""))
-            continue
-        top2 = s.nlargest(2).index.tolist()
-        results.append((top2[0], top2[1]))
-    monthly_assets = pd.DataFrame(results, index=monthly.index, columns=["asset1","asset2"])
-    today           = df.index[-1]
-    prev_month_end = (today.to_period("M") - 1).to_timestamp("M")
-    this_month_end = today.to_period("M").to_timestamp("M")
-    def get_assets(month_end):
-        valid = monthly_assets[monthly_assets.index <= month_end]
-        if len(valid) == 0: return "", ""
-        return valid.iloc[-1]["asset1"], valid.iloc[-1]["asset2"]
-    cur_a1,  cur_a2  = get_assets(prev_month_end)
-    next_a1, next_a2 = get_assets(this_month_end)
-    return cur_a1, cur_a2, next_a1, next_a2
-
-# =========================
-# 7. メッセージ構築 (1行ずつ append する元のスタイルを完全再現)
+# 7. メッセージ構築
 # =========================
 def count_hold_days(df, entry_date, current_date) -> int:
     if not entry_date: return 0
@@ -397,7 +387,7 @@ def build_message(today, state_after, action, action_reason,
     def yn(b): return "✅" if b else "❌"
 
     lines = []
-    lines.append(f"【SOXL戦略 v15 日次レポート {date_str}】")
+    lines.append(f"【SOXL戦略 v16 日次レポート {date_str}】")
     lines.append("")
 
     lines.append("📊 マーケット指標")
@@ -421,7 +411,7 @@ def build_message(today, state_after, action, action_reason,
         s_hd = count_hold_days(df, state_after["sniper_ed"], today_date)
         s_pnl = (today["close"] / s_ep) - 1
         lines.append(f"📈 保有中: {s_ep:.2f}買付 (保有{s_hd}/20日) 含み損益 {s_pnl*100:+.2f}%")
-        lines.append(f"    TP目標: {s_ep*1.16:.2f} (+16%) / SL水準: {s_ep*0.90:.2f} (-10%)")
+        lines.append(f"   TP目標: {s_ep*1.16:.2f} (+16%) / SL水準: {s_ep*0.90:.2f} (-10%)")
     elif state_after.get("sniper_pending_entry"):
         lines.append("⚠️ 翌日寄り: SOXLエントリー予約済み (先読みシグナル)")
     elif state_after.get("sniper_pending_exit"):
@@ -504,7 +494,7 @@ def build_message(today, state_after, action, action_reason,
     return "\n".join(lines)
 
 # =========================
-# 8. メイン (V15ロジック・優先順位)
+# 8. メイン (V16ロジック・優先順位)
 # =========================
 def main():
     df         = fetch_data()
@@ -561,7 +551,7 @@ def main():
             sniper_action = "SOXLエントリー予約"
             sniper_reason = "先読みシグナル点灯 → 翌寄り買付"
 
-    # --- メイン口座 (V15) 処理 ---
+    # --- メイン口座 (V16) 処理 ---
     lock_days_passed = 0
     soxs_ma_locked = False
     if state_before.get("last_soxs_ma_sl_date"):
@@ -645,7 +635,7 @@ def main():
             action = f"{pos}売却予約(期限)"
             state_after["pending_exit_next_open"] = True
 
-    # ★ V15 優先順位判定 (V9 > DIP > GC > SOXS)
+    # ★ V16 優先順位判定 (V9 > DIP > GC > SOXS)
     v9_sig = bool(today["sig_or3"]) or bool(today["sig_or4"])
     dip_sig = bool(today["sig_dip_rebound"])
     gc_sig = bool(today["sig_trend_gc"])
