@@ -89,7 +89,7 @@ def send_line(msg: str):
     r.raise_for_status()
 
 # =========================
-# 3. 統計計算・可視化関数群 (元のコードから完全に復元)
+# 3. 統計計算・可視化関数群
 # =========================
 def summarize_performance(daily_df, rf=0.0):
     r  = daily_df["ret"].dropna()
@@ -219,6 +219,20 @@ def save_state(state: dict):
 # =========================
 # 5. データ取得・指標計算
 # =========================
+
+# ★ 不足していた補助関数を完全に復元
+def flatten_cols(x):
+    if isinstance(x.columns, pd.MultiIndex):
+        x.columns = x.columns.get_level_values(0)
+    return x
+
+def calc_rsi(close, period=14):
+    delta = close.diff()
+    gain  = delta.clip(lower=0).rolling(period).mean()
+    loss  = (-delta.clip(upper=0)).rolling(period).mean()
+    rs    = gain / loss
+    return 100 - (100 / (1 + rs))
+
 def calc_core_rotation(df: pd.DataFrame):
     prices = df[["qqq","smh","xle","gld","vht"]].copy()
     prices.columns = CORE_TICKERS
@@ -282,7 +296,7 @@ def fetch_data() -> pd.DataFrame:
         df[f"qqq_ma{n}"] = df["qqq"].rolling(n).mean()
         df[f"smh_ma{n}"] = df["smh"].rolling(n).mean()
         
-    df["tlt_ma150"] = df["tlt"].rolling(150).mean() # ★ V15
+    df["tlt_ma150"] = df["tlt"].rolling(150).mean()
     df["tnx_ma50"]  = df["tnx"].rolling(50).mean()  # ★ V16
     
     df["bb_mid"]   = df["close"].rolling(20).mean()
