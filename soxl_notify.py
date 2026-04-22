@@ -1,13 +1,11 @@
 # ============================================================
-# SOXL Strategy v16 - GitHub Actions + 可視化 + LINE通知 (完全版)
+# SOXL Strategy v17 (CASH待機版) - GitHub Actions + LINE通知
 # ------------------------------------------------------------
 # 構造：ユーザー様提供のスクリプトを 100% 継承し復元（省略一切なし）
-# 変更点 (V15 -> V16)：
-# 1. 判定エンジンを V16 仕様へ更新
-#    - TREND_GC の金利フィルターをハイブリッド化: (TLT > 150MA) または (TNX < 50MA)
-#    - TREND_GC の VIX フィルターを < 20 に厳格化
-# 2. 優先順位 V9 > DIP > GC > SOXS を維持
-# 3. SOXS_PRE_DC, SNIPER (サブ口座) などのロジックを完全維持
+# 変更点 (V16 -> V17)：
+# 1. COREローテーション機能を完全撤廃
+# 2. 待機時のポジション名を "CORE" から "CASH" に変更
+# 3. LINE通知からCore関連の表示を削除
 # ============================================================
 
 import os
@@ -18,11 +16,6 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import matplotlib.patches as mpatches
-import matplotlib.lines as mlines
-from IPython.display import display
 
 # 指数表記を禁止し、通常の小数(4桁)で表示する設定
 pd.set_option('display.float_format', '{:.4f}'.format)
@@ -34,7 +27,7 @@ pd.set_option("display.max_columns", None)
 START          = "2015-01-01"
 QQQ_GAP_BASE   = 0.010
 
-# 条件別TP/SL/hold（V16確定値 + サブ口座）
+# 条件別TP/SL/hold（V17確定値 + サブ口座）
 PARAMS = {
     "base_normal": {"tp": 0.26, "sl": -0.15, "hold": 30},
     "base_alert":  {"tp": 0.26, "sl": -0.09, "hold": 30},
@@ -49,14 +42,13 @@ PARAMS = {
     "SNIPER":      {"tp": 0.16, "sl": -0.10, "hold": 20}, # サブ口座(先読み)用
 }
 
-CORE_TICKERS       = ["QQQ", "SMH", "XLE", "GLD", "VHT"]
 STATE_PATH         = "state.json"
 LINE_TOKEN         = os.environ.get("LINE_TOKEN", "")
 GITHUB_TOKEN       = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPOSITORY  = os.environ.get("GITHUB_REPOSITORY", "")
 
 # =========================
-# 2. GitHub push / LINE送信 / ユーティリティ
+# 2. GitHub push / LINE送信
 # =========================
 def push_state_to_github():
     if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
@@ -64,19 +56,19 @@ def push_state_to_github():
         return
     repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPOSITORY}.git"
     subprocess.run(["git", "config", "user.name",  "github-actions[bot]"], check=True)
-    subprocess.run(["git", "config", "user.email",
-                    "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+    subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
     subprocess.run(["git", "add", STATE_PATH], check=True)
     diff = subprocess.run(["git", "diff", "--cached", "--quiet"], check=False)
     if diff.returncode == 0:
         print("No state change.")
         return
-    subprocess.run(["git", "commit", "-m", "Update state.json v16 final"], check=True)
+    subprocess.run(["git", "commit", "-m", "Update state.json v17 final"], check=True)
     subprocess.run(["git", "push", repo_url, "HEAD:main"], check=True)
 
 def send_line(msg: str):
     if not LINE_TOKEN:
         print("Skip LINE: missing token")
+        print(msg)
         return
     url = "https://api.line.me/v2/bot/message/broadcast"
     headers = {
@@ -89,103 +81,11 @@ def send_line(msg: str):
     r.raise_for_status()
 
 # =========================
-# 3. 統計計算・可視化関数群
-# =========================
-def summarize_performance(daily_df, rf=0.0):
-    r  = daily_df["ret"].dropna()
-    eq = daily_df["equity"]
-    dd = eq / eq.cummax() - 1
-    years  = (daily_df.index[-1] - daily_df.index[0]).days / 365.25
-    cagr   = eq.iloc[-1] ** (1/years) - 1 if years > 0 else np.nan
-    vol    = r.std() * np.sqrt(252)
-    sharpe = (r.mean()*252 - rf) / vol if vol > 0 else np.nan
-    max_dd = float(dd.min())
-    calmar = cagr / abs(max_dd) if max_dd < 0 else np.nan
-    return pd.Series({
-        "v16_final": eq.iloc[-1], 
-        "CAGR": cagr, 
-        "volatility": vol, 
-        "Sharpe": sharpe, 
-        "Calmar": calmar, 
-        "maxDD": max_dd
-    })
-
-def calc_trade_stats(tr_df):
-    if len(tr_df) == 0:
-        return pd.Series(dtype=float)
-    wins = tr_df["ret"] > 0
-    return pd.Series({
-        "trades": len(tr_df),
-        "winrate": wins.mean(),
-        "mean": tr_df["ret"].mean(),
-        "tp_rate": (tr_df["exit_reason"] == "TP").mean(),
-        "sl_rate": (tr_df["exit_reason"] == "SL").mean(),
-        "time_rate": (tr_df["exit_reason"] == "TIME").mean(),
-        "avg_hold_days": tr_df["hold_days"].mean(),
-        "max_win": tr_df["ret"].max(),
-        "max_loss": tr_df["ret"].min()
-    })
-
-def draw_candlestick(ax, df_sub, o_col, h_col, l_col, c_col):
-    up = df_sub[df_sub[c_col] >= df_sub[o_col]]
-    down = df_sub[df_sub[c_col] < df_sub[o_col]]
-    ax.vlines(up.index, up[l_col], up[h_col], color='#1ca386', linewidth=1)
-    ax.bar(up.index, up[c_col]-up[o_col], bottom=up[o_col], color='#1ca386', width=0.6)
-    ax.vlines(down.index, down[l_col], down[h_col], color='#e74c3c', linewidth=1)
-    ax.bar(down.index, down[o_col]-down[c_col], bottom=down[c_col], color='#e74c3c', width=0.6)
-
-def plot_yearly_trades_custom(df, trades_df):
-    if trades_df.empty:
-        return
-    trades_df = trades_df.copy()
-    trades_df["entry_date"] = pd.to_datetime(trades_df["entry_date"])
-    trades_df["exit_date"] = pd.to_datetime(trades_df["exit_date"])
-    years = sorted(set(df.index.year))
-    colors = {
-        "base_normal": "#1565C0", "base_alert": "#1976D2", "bb": "#6A1B9A", 
-        "SC": "#C62828", "OR4": "#EF6C00", "DIP_REBOUND": "#2E7D32", 
-        "TREND_GC": "#827717", "SOXS_BB": "#C2185B", "SOXS_MA": "#00838F", 
-        "SOXS_PRE_DC": "#D81B60"
-    }
-    for yr in years:
-        df_yr = df[df.index.year == yr]
-        tr_yr = trades_df[(trades_df["entry_date"].dt.year == yr) | (trades_df["exit_date"].dt.year == yr)]
-        if tr_yr.empty:
-            continue
-        fig, axes = plt.subplots(2, 1, figsize=(22, 12), sharex=True, gridspec_kw={'height_ratios': [2, 1.2]})
-        fig.suptitle(f"V16 Final Trade Log: {yr}", fontsize=20, fontweight="bold")
-        ax_l, ax_s = axes[0], axes[1]
-        for ax in [ax_l, ax_s]:
-            ax.set_facecolor('#fafafa')
-            ax.grid(True, alpha=0.3, color='#cccccc', linestyle='-')
-        draw_candlestick(ax_l, df_yr, "open", "high", "low", "close")
-        draw_candlestick(ax_s, df_yr, "soxs_open", "soxs_high", "soxs_low", "soxs_close")
-        for _, row in tr_yr.iterrows():
-            asset = row["asset"]
-            sig = row["sig_type"]
-            c = colors.get(sig, "gray")
-            en_dt = row["entry_date"]
-            ex_dt = row["exit_date"]
-            ret = row["ret"]
-            reason = row["exit_reason"]
-            target_ax = ax_l if asset == "SOXL" else ax_s
-            if en_dt in df_yr.index:
-                target_ax.axvspan(en_dt, ex_dt if ex_dt in df_yr.index else df_yr.index[-1], color=c, alpha=0.12, lw=0)
-                target_ax.scatter(en_dt, row["entry_px"], marker='^' if asset=="SOXL" else 'v', facecolor=c, edgecolor='black', s=130, zorder=5)
-                target_ax.annotate(sig, (mdates.date2num(en_dt), row["entry_px"]), textcoords="offset points", xytext=(0, 10 if asset=="SOXL" else -15), ha='center', fontsize=9, color=c, fontweight='bold')
-            if ex_dt in df_yr.index:
-                res_c = 'green' if ret > 0 else 'red'
-                target_ax.scatter(ex_dt, row["exit_px"], marker='X', color=res_c, s=150, zorder=6)
-                target_ax.annotate(f"{reason}\n{ret*100:.1f}%", (mdates.date2num(ex_dt), row["exit_px"]), textcoords="offset points", xytext=(0, 15 if ret>0 else -20), ha='center', fontsize=10, color=res_c, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.8, ec=res_c))
-        plt.tight_layout()
-        plt.show()
-
-# =========================
-# 4. 状態管理
+# 3. 状態管理
 # =========================
 def load_state() -> dict:
     default = {
-        "position":                  "CORE",
+        "position":                  "CASH", # ★ V17: 平時はCASH
         "sig_type":                  None,
         "entry_price":               None,
         "entry_date":                None,
@@ -195,8 +95,6 @@ def load_state() -> dict:
         "pending_entry_sig_type":    None,
         "pending_exit_next_open":    False,
         "pending_exit_reason":       None,
-        "core_asset1":               "",
-        "core_asset2":               "",
         "last_soxs_ma_sl_date":      None,
         "sniper_pos":                False,
         "sniper_ep":                 None,
@@ -217,10 +115,8 @@ def save_state(state: dict):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 # =========================
-# 5. データ取得・指標計算
+# 4. データ取得・指標計算
 # =========================
-
-# ★ 不足していた補助関数を完全に復元
 def flatten_cols(x):
     if isinstance(x.columns, pd.MultiIndex):
         x.columns = x.columns.get_level_values(0)
@@ -233,36 +129,11 @@ def calc_rsi(close, period=14):
     rs    = gain / loss
     return 100 - (100 / (1 + rs))
 
-def calc_core_rotation(df: pd.DataFrame):
-    prices = df[["qqq","smh","xle","gld","vht"]].copy()
-    prices.columns = CORE_TICKERS
-    monthly = prices.resample("ME").last()
-    score = monthly.pct_change(3) + monthly.pct_change(6) + monthly.pct_change(12)
-    results = []
-    for i in range(len(monthly)):
-        s = score.iloc[i].dropna()
-        if len(s) < 2:
-            results.append(("", ""))
-            continue
-        top2 = s.nlargest(2).index.tolist()
-        results.append((top2[0], top2[1]))
-    monthly_assets = pd.DataFrame(results, index=monthly.index, columns=["asset1","asset2"])
-    today           = df.index[-1]
-    prev_month_end = (today.to_period("M") - 1).to_timestamp("M")
-    this_month_end = today.to_period("M").to_timestamp("M")
-    def get_assets(month_end):
-        valid = monthly_assets[monthly_assets.index <= month_end]
-        if len(valid) == 0: return "", ""
-        return valid.iloc[-1]["asset1"], valid.iloc[-1]["asset2"]
-    cur_a1,  cur_a2  = get_assets(prev_month_end)
-    next_a1, next_a2 = get_assets(this_month_end)
-    return cur_a1, cur_a2, next_a1, next_a2
-
 def fetch_data() -> pd.DataFrame:
+    # ★ V17: CORE用のティッカーを削除し軽量化
     tickers = {
         "SOXL": "SOXL", "SOXS": "SOXS", "QQQ": "QQQ", "SMH": "SMH",
-        "XLE": "XLE",   "GLD": "GLD", "VHT": "VHT", "TLT": "TLT", 
-        "TNX": "^TNX",  "VIX": "^VIX",  "VVIX": "^VVIX" # ★ V16 TNX追加
+        "TLT": "TLT", "TNX": "^TNX", "VIX": "^VIX",  "VVIX": "^VVIX"
     }
     raw = {k: flatten_cols(yf.download(v, start=START,
                            auto_adjust=False, progress=False))
@@ -274,8 +145,7 @@ def fetch_data() -> pd.DataFrame:
         if c in ["Open", "High", "Low", "Close"]:
             df[f"soxs_{c.lower()}"] = raw["SOXS"][c]
             
-    # ★ V16 TNX追加
-    for c in ["QQQ", "SMH", "XLE", "GLD", "VHT", "VIX", "VVIX", "TLT", "TNX"]:
+    for c in ["QQQ", "SMH", "VIX", "VVIX", "TLT", "TNX"]:
         df[c.lower()] = raw[c]["Close"]
         
     df["smh_vol"]  = raw["SMH"]["Volume"]
@@ -296,8 +166,8 @@ def fetch_data() -> pd.DataFrame:
         df[f"qqq_ma{n}"] = df["qqq"].rolling(n).mean()
         df[f"smh_ma{n}"] = df["smh"].rolling(n).mean()
         
-    df["tlt_ma150"] = df["tlt"].rolling(150).mean()
-    df["tnx_ma50"]  = df["tnx"].rolling(50).mean()  # ★ V16
+    df["tlt_ma150"] = df["tlt"].rolling(150).mean() 
+    df["tnx_ma50"]  = df["tnx"].rolling(50).mean()  
     
     df["bb_mid"]   = df["close"].rolling(20).mean()
     df["bb_sigma"] = df["close"].rolling(20).std()
@@ -345,7 +215,7 @@ def fetch_data() -> pd.DataFrame:
     df["sig_dip_rebound"] = ((df["qqq"] > df["qqq_ma150"]) & (df["smh"] > df["smh_ma150"]) & 
                              (df["rsi2"] <= 30) & (df["ret1"].shift(1) >= 0.025))
     
-    # ★ V16 TREND_GC (ハイブリッドフィルター: TLT>150MA または TNX<50MA, VIX < 20)
+    # TREND_GC
     cond_gc = ((df["smh_ma_20"].shift(1) <= df["smh_ma_50"].shift(1)) &
                (df["smh_ma_20"] > df["smh_ma_50"]))
     hybrid_filter = (df["tlt"] > df["tlt_ma150"]) | (df["tnx"] < df["tnx_ma50"])
@@ -378,7 +248,7 @@ def fetch_data() -> pd.DataFrame:
     return df
 
 # =========================
-# 7. メッセージ構築
+# 5. メッセージ構築
 # =========================
 def count_hold_days(df, entry_date, current_date) -> int:
     if not entry_date: return 0
@@ -387,7 +257,7 @@ def count_hold_days(df, entry_date, current_date) -> int:
     except: return 0
 
 def build_message(today, state_after, action, action_reason,
-                  cur_a1, cur_a2, next_a1, next_a2, soxs_ma_locked, lock_days_passed, df, today_date,
+                  soxs_ma_locked, lock_days_passed, df, today_date,
                   sniper_action, sniper_reason) -> str:
 
     date_str    = str(today.name.date())
@@ -401,7 +271,7 @@ def build_message(today, state_after, action, action_reason,
     def yn(b): return "✅" if b else "❌"
 
     lines = []
-    lines.append(f"【SOXL戦略 v16 日次レポート {date_str}】")
+    lines.append(f"【SOXL戦略 v17 日次レポート {date_str}】")
     lines.append("")
 
     lines.append("📊 マーケット指標")
@@ -499,16 +369,10 @@ def build_message(today, state_after, action, action_reason,
             lines.append(f"⚠️ 保休期限まで残り{max_hd - hd}日")
         lines.append("")
 
-    lines.append("🔄 Core Rotation")
-    lines.append(f"今月保有  : {cur_a1} + {cur_a2}")
-    lines.append(f"来月予定  : {next_a1} + {next_a2}")
-    if (cur_a1 != next_a1 or cur_a2 != next_a2):
-        lines.append("⚠️ 来月切り替えあり（月末リバランス）")
-
     return "\n".join(lines)
 
 # =========================
-# 8. メイン (V16ロジック・優先順位)
+# 6. メイン (V17ロジック・優先順位)
 # =========================
 def main():
     df         = fetch_data()
@@ -565,7 +429,7 @@ def main():
             sniper_action = "SOXLエントリー予約"
             sniper_reason = "先読みシグナル点灯 → 翌寄り買付"
 
-    # --- メイン口座 (V16) 処理 ---
+    # --- メイン口座 (V17 CASH待機版) 処理 ---
     lock_days_passed = 0
     soxs_ma_locked = False
     if state_before.get("last_soxs_ma_sl_date"):
@@ -580,16 +444,13 @@ def main():
 
     action = "HOLD"
     action_reason = "変化なし"
-    cur_a1, cur_a2, next_a1, next_a2 = calc_core_rotation(df)
-    state_after["core_asset1"] = cur_a1
-    state_after["core_asset2"] = cur_a2
 
     if state_before.get("pending_exit_next_open", False):
         asset = state_before["position"]
         exit_px = today["open"] if asset == "SOXL" else today["soxs_open"]
         ep = state_before.get("entry_price", exit_px)
         trade_ret = (exit_px / ep) - 1
-        state_after["position"] = "CORE"
+        state_after["position"] = "CASH" # ★ V17: 売却後はCASHに戻る
         state_after["sig_type"] = None
         state_after["entry_price"] = None
         state_after["entry_date"] = None
@@ -630,7 +491,7 @@ def main():
         if t_l <= sl_px:
             action = f"{pos}売却(SL)"
             action_reason = f"SLヒット ({sl_px:.2f})"
-            state_after["position"] = "CORE"
+            state_after["position"] = "CASH" # ★ V17: SL後もCASH
             state_after["entry_price"] = None
             state_after["entry_date"] = None
             state_after["hold_days"] = 0
@@ -640,7 +501,7 @@ def main():
         elif t_h >= tp_px:
             action = f"{pos}売却(TP)"
             action_reason = f"TPヒット ({tp_px:.2f})"
-            state_after["position"] = "CORE"
+            state_after["position"] = "CASH" # ★ V17: TP後もCASH
             state_after["entry_price"] = None
             state_after["entry_date"] = None
             state_after["hold_days"] = 0
@@ -649,7 +510,7 @@ def main():
             action = f"{pos}売却予約(期限)"
             state_after["pending_exit_next_open"] = True
 
-    # ★ V16 優先順位判定 (V9 > DIP > GC > SOXS)
+    # ★ V17 優先順位判定 (V9 > DIP > GC > SOXS)
     v9_sig = bool(today["sig_or3"]) or bool(today["sig_or4"])
     dip_sig = bool(today["sig_dip_rebound"])
     gc_sig = bool(today["sig_trend_gc"])
@@ -662,7 +523,7 @@ def main():
         if bool(row["sig_bb"]): return "bb"
         return "or4"
 
-    if state_after["position"] == "CORE":
+    if state_after["position"] == "CASH": # ★ V17: CASH時に新規エントリー判定
         target = None
         if v9_sig:
             sig_n = get_v9_type(today)
@@ -694,7 +555,7 @@ def main():
             state_after["pending_entry_signal_date"] = str(today_date.date())
 
     save_state(state_after)
-    msg = build_message(today, state_after, action, action_reason, cur_a1, cur_a2, next_a1, next_a2, soxs_ma_locked, lock_days_passed, df, today_date, sniper_action, sniper_reason)
+    msg = build_message(today, state_after, action, action_reason, soxs_ma_locked, lock_days_passed, df, today_date, sniper_action, sniper_reason)
     print(msg)
     send_line(msg)
     push_state_to_github()
