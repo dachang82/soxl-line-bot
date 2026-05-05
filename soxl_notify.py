@@ -6,6 +6,7 @@
 # 1. COREローテーション機能を完全撤廃
 # 2. 待機時のポジション名を "CORE" から "CASH" に変更
 # 3. LINE通知からCore関連の表示を削除
+# 4. SOXS_MA の条件を 75MA乖離 40%以上 60%以下 + ヒゲ条件 に変更
 # ============================================================
 
 import os
@@ -26,6 +27,10 @@ pd.set_option("display.max_columns", None)
 # =========================
 START          = "2015-01-01"
 QQQ_GAP_BASE   = 0.010
+
+# SOXS_MA 条件
+SOXS_MA_MIN_DEV = 0.40
+SOXS_MA_MAX_DEV = 0.60
 
 # 条件別TP/SL/hold（V17確定値 + サブ口座）
 PARAMS = {
@@ -226,9 +231,12 @@ def fetch_data() -> pd.DataFrame:
     # ショート
     df["sig_soxs_pre_dc"] = ((df["soxl_ma_20"] > df["soxl_ma_50"]) & (df["close"] < df["soxl_ma_20"]) & (df["soxl_dist"] < 0.010) & (df["vix_ret5"] > 0.10))
     df["sig_soxs_bb"] = (df["close"] >= df["bb40_upper"])
-    df["sig_soxs_ma"] = ((df["ma75_dev"] >= 0.40) & 
-                         (df["prev_upper_wick_ratio"] >= 0.10) &
-                         (df["t1_upper_wick_ratio"] >= 0.05))
+    df["sig_soxs_ma"] = (
+        (df["ma75_dev"] >= SOXS_MA_MIN_DEV) &
+        (df["ma75_dev"] <= SOXS_MA_MAX_DEV) &
+        (df["prev_upper_wick_ratio"] >= 0.10) &
+        (df["t1_upper_wick_ratio"] >= 0.05)
+    )
 
     # Sniper (サブ)
     df["sig_sniper"] = ((df["soxl_ma_20"] < df["soxl_ma_50"]) &
@@ -251,10 +259,12 @@ def fetch_data() -> pd.DataFrame:
 # 5. メッセージ構築
 # =========================
 def count_hold_days(df, entry_date, current_date) -> int:
-    if not entry_date: return 0
+    if not entry_date:
+        return 0
     try:
         return int(len(df.loc[pd.Timestamp(entry_date):current_date]))
-    except: return 0
+    except:
+        return 0
 
 def build_message(today, state_after, action, action_reason,
                   soxs_ma_locked, lock_days_passed, df, today_date,
@@ -268,7 +278,8 @@ def build_message(today, state_after, action, action_reason,
     vvix_r5 = today["vvix_ret5"]
     obv_vs_ma = today["smh_obv"] > today["smh_obv_ma20"]
 
-    def yn(b): return "✅" if b else "❌"
+    def yn(b):
+        return "✅" if b else "❌"
 
     lines = []
     lines.append(f"【SOXL戦略 v17 日次レポート {date_str}】")
@@ -305,13 +316,13 @@ def build_message(today, state_after, action, action_reason,
     lines.append("📡 メイン口座 シグナル")
     lines.append(f"OR3(V9) : {yn(today['sig_or3'])}")
     if bool(today['sig_base_alert']):
-        lines.append(f" └ Base(Alert) ✅")
+        lines.append(" └ Base(Alert) ✅")
     elif bool(today['sig_base_normal']):
-        lines.append(f" └ Base(Normal) ✅")
+        lines.append(" └ Base(Normal) ✅")
     elif bool(today['sig_sc']):
-        lines.append(f" └ SC ✅")
+        lines.append(" └ SC ✅")
     elif bool(today['sig_bb']):
-        lines.append(f" └ BB ✅")
+        lines.append(" └ BB ✅")
         
     lines.append(f"OR4(V9) : {yn(today['sig_or4'])}")
     lines.append(f"DIP_REB : {yn(today['sig_dip_rebound'])}")
@@ -408,17 +419,17 @@ def main():
         hit_sl = today["low"] <= ep * 0.90
         if hit_sl:
             sniper_action = "SOXL売却 (SL)"
-            sniper_reason = f"損切り水準到達"
+            sniper_reason = "損切り水準到達"
             state_after["sniper_pos"] = False
             state_after["sniper_ep"] = state_after["sniper_ed"] = None
         elif hit_tp:
             sniper_action = "SOXL売却 (TP)"
-            sniper_reason = f"利確水準到達"
+            sniper_reason = "利確水準到達"
             state_after["sniper_pos"] = False
             state_after["sniper_ep"] = state_after["sniper_ed"] = None
         elif hd >= 20:
             sniper_action = "SOXL売却予約 (期限)"
-            sniper_reason = f"保有20日到達 → 翌寄り売却"
+            sniper_reason = "保有20日到達 → 翌寄り売却"
             state_after["sniper_pending_exit"] = True
         else:
             sniper_action = "SOXL保有継続"
@@ -517,10 +528,14 @@ def main():
     soxs_sig = bool(today["sig_soxs_pre_dc"]) or bool(today["sig_soxs_bb"]) or bool(today["sig_soxs_ma"])
 
     def get_v9_type(row):
-        if bool(row["sig_sc"]): return "sc"
-        if bool(row["sig_base_alert"]): return "base_alert"
-        if bool(row["sig_base_normal"]): return "base_normal"
-        if bool(row["sig_bb"]): return "bb"
+        if bool(row["sig_sc"]):
+            return "sc"
+        if bool(row["sig_base_alert"]):
+            return "base_alert"
+        if bool(row["sig_base_normal"]):
+            return "base_normal"
+        if bool(row["sig_bb"]):
+            return "bb"
         return "or4"
 
     if state_after["position"] == "CASH": # ★ V17: CASH時に新規エントリー判定
@@ -533,9 +548,12 @@ def main():
         elif gc_sig:
             target = ("SOXL", "TREND_GC")
         elif soxs_sig:
-            if bool(today["sig_soxs_pre_dc"]): sig_n = "SOXS_PRE_DC"
-            elif bool(today["sig_soxs_bb"]): sig_n = "SOXS_BB"
-            else: sig_n = "SOXS_MA"
+            if bool(today["sig_soxs_pre_dc"]):
+                sig_n = "SOXS_PRE_DC"
+            elif bool(today["sig_soxs_bb"]):
+                sig_n = "SOXS_BB"
+            else:
+                sig_n = "SOXS_MA"
             target = ("SOXS", sig_n) if not (sig_n == "SOXS_MA" and soxs_ma_locked) else None
         
         if target:
