@@ -594,6 +594,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-PYEOF
-cp /home/claude/line_notify_v19.py /mnt/user-data/outputs/line_notify_v19.py
-echo "done"
+
