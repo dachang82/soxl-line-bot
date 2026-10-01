@@ -13,7 +13,7 @@
   "sniper_pos": false,
   "sniper_ep": null,
   "sniper_ed": null,
-  "sniper_pending_entry": false,
+  "sniper_pending_entry": true,
   "sniper_pending_exit": false,
   "last_sc_sl_date": null
 }
