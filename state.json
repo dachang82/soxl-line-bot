@@ -10,10 +10,10 @@
   "pending_exit_next_open": false,
   "pending_exit_reason": null,
   "last_soxs_ma_sl_date": null,
-  "sniper_pos": false,
-  "sniper_ep": null,
-  "sniper_ed": null,
-  "sniper_pending_entry": true,
+  "sniper_pos": true,
+  "sniper_ep": 148.55499267578125,
+  "sniper_ed": "2026-10-01",
+  "sniper_pending_entry": false,
   "sniper_pending_exit": false,
   "last_sc_sl_date": null
 }
