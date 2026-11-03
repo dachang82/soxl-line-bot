@@ -29,6 +29,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import uuid
@@ -941,17 +942,68 @@ def save_state(state):
     os.replace(tmp, STATE_PATH)
 
 
-def git_command(args, *, check=True):
-    # トークンをコマンド引数やURLに含めず、エラーにも出さない。
+def git_environment():
+    # extraheaderは追記型。checkoutの認証をコマンド内だけリセットしてから一つ設定する。
+    # .git/configに保存済みのcheckout設定自体は変更しない。
     env = os.environ.copy()
+    env['GIT_TERMINAL_PROMPT'] = '0'
+    if not GITHUB_TOKEN:
+        return env
+    try:
+        count = int(env.get('GIT_CONFIG_COUNT', '0'))
+        if count < 0:
+            raise ValueError
+    except ValueError:
+        raise RuntimeError('Gitの環境設定GIT_CONFIG_COUNTが不正です。') from None
+    root_key = 'http.https://github.com/.extraheader'
+    repo_key = (f'http.https://github.com/{GITHUB_REPOSITORY}.git.extraheader'
+                if GITHUB_REPOSITORY else root_key)
     encoded = base64.b64encode(('x-access-token:'+GITHUB_TOKEN).encode()).decode()
-    count = int(env.get('GIT_CONFIG_COUNT', '0'))
-    env['GIT_CONFIG_COUNT'] = str(count+1)
-    env[f'GIT_CONFIG_KEY_{count}'] = 'http.https://github.com/.extraheader'
-    env[f'GIT_CONFIG_VALUE_{count}'] = 'AUTHORIZATION: basic '+encoded
-    result = subprocess.run(['git', *args], env=env, capture_output=True, text=True, check=False)
+    pairs = [(root_key, '')]
+    if repo_key != root_key:
+        pairs.append((repo_key, ''))
+    pairs.append((repo_key, 'AUTHORIZATION: basic '+encoded))
+    for key, value in pairs:
+        env[f'GIT_CONFIG_KEY_{count}'] = key
+        env[f'GIT_CONFIG_VALUE_{count}'] = value
+        count += 1
+    env['GIT_CONFIG_COUNT'] = str(count)
+    return env
+
+
+def sanitize_git_error(text):
+    text = text.decode('utf-8', errors='replace') if isinstance(text, bytes) else str(text or '')
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    if GITHUB_TOKEN:
+        encoded = base64.b64encode(('x-access-token:'+GITHUB_TOKEN).encode()).decode()
+        for secret in (GITHUB_TOKEN, encoded):
+            text = text.replace(secret, '[認証情報非表示]')
+    text = re.sub(r'(https?://)[^/\s@]+@', r'\1[認証情報非表示]@', text)
+    text = re.sub(r'(?i)(\b(?:proxy-)?authorization\s*[:=]\s*)(?:basic|bearer)\s+\S+',
+                  r'\1[認証情報非表示]', text)
+    text = re.sub(r'\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+', '[認証情報非表示]', text)
+    return text.strip()[:2000]
+
+
+def git_command(args, *, check=True):
+    # トークンはURL・引数に含めない。失敗時は認証情報を伏せたGitの詳細を出す。
+    phase = str(args[0]) if args else 'command'
+    try:
+        result = subprocess.run(['git', *args], env=git_environment(), capture_output=True,
+                                text=True, check=False, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f'GitHub状態同期のgit {phase}が60秒でタイムアウトしました。'
+                           '状態処理・LINE送信を進めずに停止します。') from None
     if check and result.returncode != 0:
-        raise RuntimeError('GitHubの状態同期に失敗しました。LINE送信前なら送信を停止しています。')
+        detail = sanitize_git_error(result.stderr or result.stdout) or 'Gitから詳細メッセージがありません。'
+        if phase == 'fetch':
+            hint = f'取得先ブランチ: {STATE_BRANCH}。認証エラーならGITHUB_TOKENの参照先と権限を確認してください。'
+        elif phase == 'push':
+            hint = 'GITHUB_TOKENのcontents: write権限・ブランチ保護・同時実行の有無を確認してください。'
+        else:
+            hint = '上記のGit詳細を確認してください。'
+        raise RuntimeError(f'GitHub状態同期のgit {phase}に失敗しました（終了コード{result.returncode}）。\n'
+                           f'Git詳細: {detail}\n{hint}\nLINE送信前なら送信を停止しています。') from None
     return result
 
 
