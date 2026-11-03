@@ -245,7 +245,7 @@ def fetch_data(now_utc=None, raw_override=None):
     df.attrs['tnx_raw'] = raw['TNX'][['Close']].rename(columns={'Close':'TNX'}).reindex(
         raw['TNX'].index.union(pd.DatetimeIndex([df.index[-1]])))
     yields = df.attrs['tnx_raw'].TNX.dropna()
-    if not np.isfinite(yields).all() or yields.le(0).any() or (yields.index.dayofweek >= 5).any():
+    if not np.isfinite(yields).all() or yields.le(0).any() or (yields.index.day_of_week >= 5).any():
         raise ValueError('^TNXの日次価格に不正値があります。別系列へ置き換えず停止します。')
     return df
 
@@ -444,7 +444,12 @@ def baseline_rate_calendar(raw):
     return expected.union(raw.index[raw.TNX.notna()]).sort_values()
 
 def baseline_available_rates(observations, stock_index):
-    stock_index = pd.DatetimeIndex(stock_index)
+    # pandas 3系では自動生成した日付の精度がs/us等で異なる。値は動かさずnsに統一。
+    stock_index = pd.DatetimeIndex(stock_index).as_unit('ns')
+    observations = observations.copy()
+    observations.index = pd.DatetimeIndex(observations.index).as_unit('ns')
+    observations['assumed_release_date'] = pd.to_datetime(
+        observations['assumed_release_date']).astype('datetime64[ns]')
     if not stock_index.is_monotonic_increasing or not stock_index.is_unique:
         raise ValueError('株式営業日は昇順・重複なしが必要です。')
     right = observations.reset_index().sort_values(['assumed_release_date', 'observation_date'])
