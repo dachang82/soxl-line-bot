@@ -606,7 +606,6 @@ def default_state():
         sniper_pending_entry_signal_date=None, sniper_pending_exit_signal_date=None,
         last_processed_date=None, half_activation_date=None, outbox=[])
 
-
 def normalize_state(saved, df):
     """旧stateを保有・予約ごと引き継ぐ。同じ日足を二回売買処理しない。"""
     state = default_state()
