@@ -1,1123 +1,276 @@
 # -*- coding: utf-8 -*-
-"""SOXL Strategy v20 — GitHub Actions / LINE 日次通知（差し替え用）
+# SOXL v20 スマホ貼付用。既存の soxl_notify.py 全体と置き換えて保存。
+# 中身は日足再取得対応版を圧縮して同梱。起動時に展開してそのまま実行します。
+# 確認だけ: python soxl_notify.py --check-only
+# 元コードを表示: python soxl_notify.py --show-source
+# 保存後、Actionsの一覧から Run workflow / main で新規実行してください。
+import base64 as _mobile_b64
+import hashlib as _mobile_hash
+import linecache as _mobile_cache
+import lzma as _mobile_lzma
+import sys as _mobile_sys
 
-本体の各戦略は通常100%。R3・YBは購入直前資産の50%（購入費用込み）。
-R3: SOXS / TP18%・SL6%・4日目引け。
-YB: SOXL / TP15%・SL9%・10日目引け。以前のYHは採用しない。
-本体最優先。ハーフ同士は先着・切替なし。同時点灯だけR3 > YB。
-本体の保有期限は翌営業日寄り。Sniperは従来どおり独立したサブ口座。
-
-既存のスクリプトと差し替え、state.json と既存の環境変数を引き継ぐ。
-必要パッケージ: pandas, numpy, yfinance, requests
-環境変数: LINE_TOKEN / GITHUB_TOKEN / GITHUB_REPOSITORY
-任意: STATE_PATH=state.json / STATE_BRANCH=main / DRY_RUN=1
-確認だけ: python soxl_strategy_v20_line.py --dry-run
-DRY_RUNでは状態保存・LINE送信・Git操作を行わない（価格取得だけ行う）。
-
-NY16:30より前は当日日足を除外。確定済みの各営業日を一度だけ処理する。
-GitHub Actionsでは同じworkflowの concurrency を設定すること。
-workflowの最上位に次を追加（既存の同等設定があればそのままでよい）:
-  concurrency:
-    group: soxl-v20-line
-    cancel-in-progress: false
-実行時刻はNY16:30以降。UTC21:45なら夏冬とも確定後（日本時間06:45）。
-本スクリプトは発注せず、日足から判定した予約・約定想定を通知する。
+_MOBILE_BUILD = 'v20-fetch-retry-20261105-mobile1'
+_MOBILE_PAYLOAD = """
+{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;Qg~kG+h7@hynZv*yhg_O-
+`2#a}D*q;sGgpSU{mj!bv|(E>auqM7jS{Oqw}x4g2^u5@Uws`aBxN%Uf;7?21dlK!7<H_vye&LTY?>=Qhr|&`TZ(#swg>D#@G4$zlOwK|WHje?UJI%t(y-
+K^ZD;@I)taN9|2P5++~<ZqvG@l_iRb3*@Z1c$wspDrjH&o|9jv27Rq9JR)OGitkcdLKfit_GbJzU>1X~BWZsz*$N0CyNHTn-
+^=AMlIP#CwUh!IF?Zijw0JYH<B=X#cOpPNtWIPa|G{6yyD2tnbqDMH=GMtkjv}QS>&YQwM^Lp^18f*~r#McyLG8zh-lSycNLb730;B@4p3K*^vd}LRdNGtLo
+VW^bE;`1GckrC6K+O1=i&F}p4$ifSp1TM3jB3OL&kr=@A&R>kMLhEF5iB5*Csobq6l-*MEKplGl_`^r%?=jDfGJrEujUxCT-C&BoQ413C-
+xmQK%ym{38v(z4$as(ta?8)Vm|VpZ1((+az;&q3n93EUIeO6LLQcYR~^16ME=CUd2!+kFrbc0(w?Kmnu!xB;WqhVn4B0_`Lp2*JC%}bOzzR|FGH^X+|TABn_
+p|$wtiY+ZYD0`=y4BleC!Fn)ngBrZ;;gI|2^;TbQRhRBSqnZPUR<aY2sjWltnrSH1`fszoXy#{V!DH33M?wIvUjJT#UPbN6g+E!kvk|lo&p&QfMBYlvU0NVt
+mbSO_>L9&a*y414nXXog3<DP7rH}C>OT69}RTa*GCOGMtgK77~`nAZE1KMJdZ@JHyZNN$IZx=JE-<iN#ukhfi%?|AaOAMBF-
+zge<P$sbm3*{#h0DKzy<7(_Oq3V>IAxT$-i-8Z8^=|T$2R3$JT#dk74(H+_hec-7|RuxNF<ka8Xlr!!-DuCKM-
+SmuZ8Epd4*LJHF$vhH$Gk%Xo)l>5g61K8G(}@eiSEI--4WB^i8S9kMFrvtk`(vEi(jw9#$9ve+>r-9817X1u!(`O!r;S=0(eMu4-
+&o&uilS1#h;OIrDCV!Y#Po3HsShVA>W0`$h}0Ht(mdc$mh;c<^Ut;~_9;2oE?LI^PLN0BIh)(bW<+D<X29a6nFrDeGJmFthOdZ$f=v}|ig+J^uq4-
+WkHHrAO3cE?W$yHu<@It|%CyMywtGhXZ3UuSD2oCA7+BUj`C6K(h#(DmE&ksNIRE#CG~C{h%aa}hAF)x_X(t}%G5d<5MTnbDs{<gH&}UxxfNor+Mkum?qW_U
+UIpVCJr2qAcGAIl<?G&4EX`a!<*iIJ7ViSHrfipg%C-6ic~%$6v|(deI8ldi-n$jY20<-a>XcJHR-
+~kUJ`AIQEB&vUjTOl;9y?NWW!i4G&wPNVltKH<AUp=z87^==P5}ctwr_2S?#KA_b7e@3WY%{9(Jb*clS_ekqtx(-
+?ji63_$0!J(Qz>KC7iBoNsNv>C1l*8~xycGJJp^ORU(#gRBT4p&8iM*|?J2Kx2z%3HtG1c-K{(gmVjgQwFt&t=)W5qh_|fWdrdYCUCw9_>m5f_<-
+Wh^LKHE1DN)2!YkiF{)wJ_!56}M)mm(!qYZXx|wE~7o8=Vhje2>vEIm;?+zGhIZ6*aBmB_=H+~d7z*$K#Mp4{hG!QvO-
+B4vpA8%u6(UU0StLS6V9v|l0_>XnfEE`LJ<;A9d_eU^_F&*9ly>@qoFPPZzIv=l=gdg3M+z8{j^GLa2A8P(4(@p;~6L!w$u@qRRApP4O%y`K1P5GRsn-
+;z0ZD_*`;XHpy)mMqJ!QE!XpPDBVquPeJ{Go=*RAShy;doWSP0sriAR6g^KHht20O(_Q8M*LLVAZ%GEFkV<A91Q>QM00yAb;^2w7!U{`Vrr5N7rgHZWyCL(N
+^^4<XU_v9Gr~8_^5Tm0Y<ZB2gL@soxQZ}px<W0=W@Ojnbi1%2isr*M<>(8s<eGKp)9Ef!Oh(8sm74xlEI+Wf|I-
+M{zcFq3pTOnLOyOIBa)Nsj&${Wn(|rIeZE<_(}ZiKQ1u1qow+IDUPxZ_B=@gwqx!u1ET9e7>O2dihgsf>CD5MsL2iuv2JkliWgNlt&9c()*aM+6`w<5ziW(7
+c0^5cM1San!o-Vf@=hSqWa`PS<(5KO&`%yMd^0|G<kR#Ld1NKQ(3lslUpdbu*Odydn2Bew~e5L_4tUQIGHN~uIo7r8f9$j@VWDjr~8aKm?m-
+dR&N&IR}GISNhZ7Cwl6u4$j7NcyMFIyqOB-XJ6w6A_hzXK)Hzdnb2fQO*VBTIsFP{@gQlPh)0!|V9@Fn3tiTU$cn{!#BU$5sY~zMDGmn|w^ICd|%Fpsma|-
+~v@zgX*WyDVG>o&P_(hz08_fS2R3!(3DJqbcA2jTKm-AJURyoDHNr$>2w|>%U6aHRlc)iEWwGQ@Tx~Iwj+;3&Q`6kYS~jt@qnlmZ7Io05&jCka3kMwcZsWQ<
+ZjRadT2pN>6te0wm9t_+GPKA`+IlXGr<Mt+75e=RRMb|Uwg13#Ei(exc7ft4ND!I(mXNtU{mFR5)p>Y&@Q!Jptv1!AJTHZ@nyK!KR);tS<3MiVKFW32K6YIa
+nEq_Kp1M?#-DxQWE5P=vS4>b-N%s58l<_<A_MRu_%#R>Vb)u`*{3^#$!&$-
+XDYxKJqo7ont^4=<Ipt#5GZOuiJl1(mwf$Rt<0@fIB}!7z3v5de@fN^vBtg;575MPF8U58k&HNL|KuE`z7VdH9V+ZzE?AgIQs1a+a64CLWUzhy>lqI#mh&kK
+66P>7`jn~Mp;Q^#n|X=Os4tA2RymO9WbsL=CIa^_fkpk2xv8JSw|dXUmOOWyl6*Fr(xINB&Z{+sO~A_VWMbY<mr@W33&X@F_*aqNwmO#YXgud9pH}%WF}Ni+
+LtN83xowUHF2Beay-E(dNS$rr-gfk3=gxTQTpchA=`xUuE#<=K9XEo}pmP*Uh}w1*JJ=@$9zVTYAG}MMe){+07I<$FR9B`-
+!ZW8ixg6ypFB$m2K5)}fou^Z(!nCW8u;jw|4jqfANuHUJwYE%SDCI70)`aC#?X;qLKeWL<5H!UiV9lotZyK#D4g+H^drptLDnC3*33AA#S_27@o}}xzy-;-
+I>|`juCO!+nUZPfD(6jtqeQLQa>*ll|wxqgCR>x;tubILg(WH--
+=VIb$bkND2CC26z3rGZHvawc9HNTh)oqU?V(O$RJ!;qS&x%J9Y5=oLq2twOBMd8Bg7K;qG(bE}N{(qy1UAQb+P@ME0Y=@I5?Tx8sRuIu~;#K(X0O8!fQ;8ql
+`*2upY$(zwiwQDC_`T|ds9YKNz)YkH^iBpyt%5zD60Fi!4N&IvWB<0Ih5)C%_h+;f>Tn_rB^%#PkA$EK4ZLR^hf*~JmYg{+>R*LQG)zv=lP}1XDp#N+V4tpF
+2*f7<Jw8QwFi-
+)>JcDx3>9FDotI&5d_(nA2+x=#h`v}Jql+`sWN@hY)nYydhjj0jh52w}$L#ET>_zWXA)3;$5PqCK&C%INtc6x{xlRrm}_)C9yOrnQSPxE9x*ip+ToH@}ki})
+3Vd~qACQ8y2xUG{~oaiU=zwqxZ=dT%vxhr^`kvn5Lj;MV12+}l}u)^$XPJ0@M_)BLz;8`<q>p~8)Av4M6;igBBe1V#>3g%ZCXXtQmp(w>IxGzgN0A(Mp9fd&
+9<DTL{A`A=w_h~PfI--
+%iK9XX?Lsn>u@BaH1>!C0ydBGXCA!~aB73)K^8Jafs3DMRq=Kcu;(8~cM!JJ*n{`toZrPS~&u1N1k$s8JvD4cngxMtvZd0u0e&%w&C~G(#kd&*(PaSlB)UI4
+nfF_@LLlI*?X{xXE2+1Sd*xOPrk4FB4U)Sm?H#Lwkpcz}FSU=r$Qef3T1|9W%*ht)!{IP_E%vWX$rC4EaopYNC>~MVD&)djtM)7}75>DiZmeVW}@f^~rXqKN
+NK-tBx4TpDp%3DF0WxDCcE8sh09)vT4|#cBJoZVfdID@+$Nt%~Td(=oRQl*=sj80E#W9d)WE(Z*VqN=Es+79Jj7eX*exB&SmDp@QgW?0;~`1@0H#ZOK-
+$TU;7!f_{}o(|F$LiKzIM;W3L1pDwxJVQ?4Kg`i@%lKcqX8@LBF{fp{mH8w#NAX2MKT&P^KJ4Z%6t@bgWDG7&(*afGL~u@n!~(87^xinByIolSS<2AtOKS3V
+(}z@jsEpd!ObHDMAjgxK#x4LP#h)j%MEC^qa?R%6*{9l|>Q=g4E%?SatnJMLbKW7yf%6o(htOp=f-H)8G3?F3~Loc0)974V2ZV^5-
+cKVyL97naBkl#JGiho~JeoPIqC^E48hofwt*L%A-
+?G<!+ZEQmdWa@bBe8n(#6&aAw;BXr=(C{M#IjVVwb(>CR9Z3RtDH9I?W&A0MenNEOCG@7rbDi|5A=;HCX^yM{CMnV1?Hejx>#D4X;Bh+)~@XxzktxG+k)^CN
+(>Nl4Y?Gsh-sFPfGT{~-SLpFLy8p2m;8S+e$((!$&J6;Z$f_KHOuhcgZMh84k5;gjYDg$j3&Rkf<nG?*g(U*-
+*DD^GwrT`$WexpVvh~Q^d<=R_;px{IVW1Rf`#diH14UA5g7Kh6`eCIe+%nQad!?;WbxTzeVY}Uo(+irZ0xVuT~l?UPbrbXftIg#<NICr4bve9ZGhMbp*ZTO4
+IX(lI+mF&ThxgffkZX;~Zc&h}w8h^~+hJAcs6`Ap?jZmjQ=6cT;Ed=3W1k()Sl5jU-$Mz%pciT&E`mXbV|InPCmk-WmI|oW82Q4Vn_Jbn-UnVPq(%9(ksJA~
+hGr4RDgFy8cIY=oo%z62w(#;{PrxI>lpxqNEW^$&jr~XUg!L{RlQ@q30;(PK$x%sBJv62RW?l3Rgul`;A07NXLFJbB1oA<FArI3ivRPNXGqi{^N7e$?crhU~
+d;R<>0{jX+QRL)qI*p0AQ^KLdQGm{O^HVG)-
+x3H4oXZ2zhqYmKLME&zjtvs1)pJ&L3KssMhLMVwtb5^5kpYMUY)x!g85vJZc_yK7~Df0V!xX@XUg^Y6PwfX+l*rf&p4;9K-
+Bos2J28stf$(gYv9F!_x$$aM&<+sfv?;Ne&QSx>R`vFak;c_LPw7<<<eZt0n^NWc#DB?HZ6*|mv?@b?fsIaI4Htq)r+A6v#cUcSxqYhX&UXrhJ+I8=tOl#|b
+M%h7sW9R)Q-kyH;&Fb}MPqsPBQ8bVJ;g8&#U|Qj(`>DIer1@^-8N4YIILx_J2f4|cCfXg1#T`81fY-
+*@P?+V}jAK|wuwd<wT6H2pOn3NYS3gd4|Ddm<EW=gkl>TajWr+lJ1wx8|R?1xMoS0hK-
+Ki6ueR4{;wZyY~w(qC2$1_)AeI2y}84Z+GX8Rmkzg)GuNH~Zmx!sVp|2ETMHOvE}*R3b(GmBqX1Alq5)_+uB*q-$)*hvb#^>4Si#g&`Hz-mevnf;#5{pnmh{
+ZoKH<cvSi{HMxy!IrO8$l?3^U}9-
+0mhiSDvO;?Awuo`N!1}r!G5Y?7^~>sk(&A|w{&%u@{BP=t*u3P^no0biQC?K{D>+0L&D0iLEqtkBaX@rrX#w1W#yXSw*RY-?-
+vp1Dl8h@#SmXr&B$@sK5H@n?rv8G>-EHyxDv)1Om=fl%sbC_{DXtP)(i|*YvQ33&$#Ct)&Gp2cqeps*6-
+})m%dxk*1W_`oC&6+4X#ZuWW0Q!eX9@1phhn=f&%rOT5VImWDJmr=T2JKOVWx!e!c1*}a}IS=ih5@Pf51ch?e7^$Bj(n?sHr8>4bBP^{h-
++fW<|MjZAT9}2AwvBp5`#5RqzDRByC0)w5jrYGjm(5Kran0yl^`LL05#S*WqeR{OcEiWO}WIKZ#JuA7t$W5D!WARpgNg32mwkcC%%{B6VKjh*e&{&I4|<XeF
+3pdzBN=-
+Dv={M3MpnVbD`YEiZ<kM(b?be@AFvYzTJ=(@E@P*1=GZzI;n~Mk2`v4Wh)>=Ph{DBTwp1B;dYf&M06w^`iBQsES*JM|@BFsTrR!E#y>bM?hPm=~*SQ83=8L(
+;BkWL4bEJRjmKA8_uTg5-V!s0k-
+*bYS$ltHRkxDWzF!tDfd0y(*$ZXyA@2R@Xksz=WXBMs~e^?{q!>G+R8sqcqSGn_Az=ZR}34FhoTf8lv~1{zEWSaJ!*yJKF_ypsvaw}1qnrL%_p1(4c$gq51L
+U#lP9iv)?_CJh>M%`5P=6bdQ}2^cV(3`!F}E{rW$tMG}N3O8qtUJ45$3!kkxQ*J#$1a|D98fU-
+>tA?E%6?wRtH)DXL~ER=xy!Zf8D=B$Ay16Py;_uLy@xbk0w~1{blFU(SXq>Cs4I`?<2`E|@gqlc?DKE0d1WkS1Y!9KK(ofmt~P2x~vei{&qwJC5<_VxkAnFZ
+Mc&Wen*{d$cboK(*Faf}S_I0tVcnq}Xgk+>s0!HpPmwITKq=8Lglr=G_N^v^@~wde*eGhT*a37bto_<T3zM2YHYT&Xsm&(#RQ_Vhkg&>bFroWbC2e=Z;<Cn5
+n=um*pr^ekIq#nlkcq3&y;F14b+8D(mD%L}xEFhg(q#yQRR96IH*$u1O~mGU@15>707@%D5Nus4M94x1cX^n?O!LVgU47pNP^Uc3WEfG5*R@*u$uH=4_|fhP
+$<W4SU~y;>*!lo8KiEai*o{aL0$5l1;u;e5y^l{+{D>Fv!+zofm-qF%Rf0ZO|>D(o+~l%Wl<9F!l!-;n_dk?A>e9J9FAsr}ZjYeww0@_Dhn);66ul+l-
+R<Q&|H0JwIa9E}a3gD!~zFduMLk#Sb2zKM)hu4lxTyQ4~tGo1iXWwU}J~u>(dfKZslmkmU0$%4qxKBaK9|ZopVbu}_4G*a7o;#XcQZWm=IWPviA};i~3r^Ix
+CjU3R}-5|ox1B421k%tvIOJ$jjSwq3S?6WU8P!$n4%1*Z!UD-J-
+3s+!jUntC$GgTOMvQiJqGk9^m{O&_2(c<S=aZjWV{&o65mGqru7s>MCv|4j#@eksgirQyXf+E-n_n~JQ+z-
+j>MeG){Xe*O{30XsG@I+*3Rk@(8?a=ur>MbEPCyBfH6t>zh49lr)fL+2S<s7EV%FcW|gO#l=*s2r1XOm$W?`3np7O?Lao-
+O)ocDo;=0MrR;;$t{*a3@S3}Mx~#;!(JyE@4x`99qc*E?zL7QDv%Wd{{IzER0y%I0DXk>+@Xmt{NftoBCK<TG?EW-
+&5qdIs82Yv%BM}yPyTL?t?msf`S`4UWOYx|SFo_{GT$Agdlg~%x5iAM6bOq<pkTFYLwe9e;`_EzrzZa;7?==7fHzvw6q`0&)ea_#F}E>;z@8XoXD>P4%&ww#
+Ryo@J>cIs>49|bQ+#C^03ROIH{96nBi%Y3KKk))5?ucpX>lA>~|LWxsu;3ZBK`H4bt3EAEnw?wed){Ofk40uQHFLPUp}Y1u;op(%)_QXkW@?NAC8H4J$HTSf
+FKxG73egbxKz9@PTe=ImR2vdz+7!GR5mA<pZ#}M3D4GBo>XVmyZ7pHqf4_*8bd!nYsPD4iXJQ*lu^53+W4J4EP80;@ZnzuMy_-
+h+i6g^ZeAo6bsl((g5rIqj739T3d9F7Vg|yU`@mu)Zzvc0WRMu!O1tF_r3*6H16sNFuk4+eowp=wVU#B>MH*!}4#DNRQ&#Xlgjxh4x4u#~m|5rvls`_l2%se
+9mZBzy-alqd(+P!QKI|lkrGyBB07QXcfid>8K?+_#;OU%fQZyiKC&?QwfTEpwF0bk@(iXZE6<jDgV^6>qde7wzsd5$>(9Tj#{t3#S9sTM}&{OR&_-
+}BTfBe@_xKi#{9`7wWwvUu_SIM>y+_5Tq#eYO|e2|^~!tzFJ>DXh8i&qU?jT&zN}Tryo|4|#^??wp{5a|3QiPC?e#-Ixk4#~n;r(Si_^MtZEff-
+@<CbM=FHR5>DvSKDj}*6rP`p%9}tmR2FLBV9Yw#GBVRlnqo#QO{~LAbb}x^R(4eT6A@Q)~i|p1U_r~Z3h^(?4OqM{!4ClbhN<yT|)<rrVe0ByV1zDqDd8@gK
+WLr#I-
+kp6mEa<=ff#ZZAw`|DOdcviB~Rn*mDXI@J|*A26j%ne7X10eCd)1r$}?N44G$(hlwzEMR;den?Bi_xK#vybXNxDnTL8jbRwyaG#}t`v{SWxhKzPgcVF`@T&*
+eJ`hYoumTc<-
+;UZbzLUceh_YZwUkwbq~w)k$Y@*5ZKxI~6QZwY_QrQtL}pf8)pf=gIZ+cV;b9XZ_{A0}jqPvKe;NQ_tb|2gkH0%nu!cYU)U=QIgaH$&=|n*x4nJ3Nh<Kb_US
+6ZykCI5{0aErBMd#B553gfo1ar*BgZQzbo7s5eYKueF-gWa)2r1IbAn?rBCk2VpuUM*jlVvbXfuS;}>1X>J9D{66O$nR;vb_mC6YBWGlks-
+Y@xw77&F@xVF^I!-tGWK=CBhDhMWD9<hKSxiP0H1T$TY?-
+{vT%=)cu12b;j~yNSdrt8twRP^qa5rctiF_pIJp|B+LjsRfNpmz(Tby8FkQ9h7a{83<R06mG@6NG(KrKv%i*4^`VSjuZ?}SfxJJ6<JjcL3-
+$m6V9?Vn;c`3TYOXbU`@c4oF|DZe9!&bom~mzf9?a;*D)%UJ`T8qKseW&|lO%40_>)XPz)FaW+<+E*nngBC<Tm;QiWGZ-sQDPZ%W<ZV}4sWw^?<;n_(p*&rT
+IY9f{)3l)MK^)K(d?_L(glX0m)^>-
+f_P)EKJW)(W)0XxDYxfklziZ<9)ZVDj5ZIY|zfXQ6j>r;Q>u;3DWolqpiCp@4%fHxxxA&||H5BXxl)L15{~I5TMa&Z^YbpJz#6<pLyvKzV0th!$g{Vn*ck03
+?#tvbSn6Ok}BYV<nFJuYK1Z-wHT&XH#I{bUu_d7((Qp^9hU#11L7x4l3rJ~IM)Ph)AnPgQZMMCe-k)!05uS~;B-xqy-AWnuGWYPcxquVU=ko3jnYOy9r_8N)
+kW>UKOsfR&#<pAueOW~8}j1+kAPo_9Bn)#|rKCPi~I85o0t&Tyzid?rmQo2S-
+)a`2lja@xCH>319xjg0pXCf6%j}jWnwn=2ER&!#3_$^Si{+h(j3sv!1u`ovDnmePjV^I60yFLEUQ(JY*9Om)=`#UkA&PR}YS_1OJ&Tt&qrou%EJgrO-
+QK;@<%JCn*JIW+n%q)43T40NrSt@q>5C^lGF9Gsdw;tK_k5Q6#t##82fw~6$&t^@b(hnYnS{u)yN%dbyqI-YDp3<L-
+mPIa0P<I%IkWdgnDe1)Jg4LaM4Qw*zjiXa&9lI~uE0e7;uye}eVc)+wje_T`?a_T;%K)=T=2$pg7b=6o39nr8NZ)<s=Q6ED!gc@U3>Pb26O5s9MI$0K*cJp<
+<BddyCu|xKq%EM{v6>Q>-
+SgehHbe1#GH2fek3pO)4r#oot=MsxV5NLuGz%|U2QJS%5JhBs>$95Dc|D@#nH(GPz;h|kP&aDrQ#UTY1|fntusc$^2g2uoyE0Bw6Ci9JpwLoj|6cIxNXLNFa
+c;q?IrZ-kTzcHYWCdvIw5`)n*Eo$e#gdsV1R9y}>~i3>hSwuK6FSL~kDg)b_~NKAHBzviq$zqLel$2PD=g)Qg>e%n*C$S1M+EFSp5X269F<Ew^;GBm$hS}2=
+9D2DSy~K{73LkodNRFKtj7NUtXE3RfcVk@VbWTE7)9E9)Vo*VhFO5b^<Asc)6;T`x5p5|Mza6{(k&`1Ey8<%q#;X*xK8*2$+Kn+eGuFv`ygyo(P1sHG&B?al
+&*F<9FjxcBAcx1?Ln;q%Cq!xHf>lDiA){jdXGdH5q+ec@dvg$71fd~>UPUnTiSwCa=-;&r=Bc?jB+~PKN5nG*)GQa7Fwm@$G=;x7l_&=3Hme}8IhYH-M-
+y)2BJHz!wbAFYjGC<JNNG(J(LA(d$Wql2bo_8EEFm&E6j`~bV_=&47$54U|lj#LZ#XdQ>t1mr@`-E7Njh1hwodPEy8S{$1(Iem-
+V^}LSh=dNNDUNY9@<dPrRr4XD^hu0Lr)UR?rWhasCu~YZ1oE!`P_WyvZs_#YG-DDsWj{$ML3x%8aHFx{`Tc;c){}>Xfh1$p5v^1>&2@3$ffPU~`vx_%d6>gT
+{1rySxO6HXXG@J6BR1nS$}CbJb!m{sm^Ww2zkw_*V5;ZVcZNW~%Xe8%n(;MbPCsSW3iTfc8r1WbO-psPn7*FmC#}EjyS{_!52|ZOKDS{h$o`=y!AKKKur;JK
+j2x6-
+VMWYkH0x6a;YVRF=+C7D+ENcq$!(bs0>VLjR|y<Xq1}0iBRsOm^OmO*W`#dH2D<EoIDf`7?i=6(Tr5>D2X5&>ZFcH9ZW1*yEj!gT0UPNFhE@JQ@BW8@rjr>m
+ML!?b$mls(d|Aw<}aSlk)PnrGfCq)b7W)<h|WS4aaDWi)?BIA3IIqi4=v7>oMZrpk$6#KY*mw0BxU5$2!qXiiFU4>*5mkHpd8A@em71u40J#YP)GRqH91oj|
+=kT{PeRbS*G=aC-~w!%|Ozp*-
+_?UWGF1I$y{}1_4Jb)<@k%s1Q^l|w?M(nYCsyxX6hW0`;sney9{lU6!}ro?{X4nO03%ZT)X)4y&1j!vWeqH7CJxETQjReP0cUXuepTv{3LB;fEZKAUkE%TOK
+ffM9XroX<inJDlBmSD13j3OI<XGoUdk&suGjr$c-@d$OzPyxBSmYp3E*03X0oXm+&M9WTWq64F!yT7qoG#Yef>)GocPVToL-
+1sQie{D#S+K|6<t^eR0|mU(8P28TQ7{in*c!9l!*G9;_<L)0Ncko4Yi?S`1>8mz-
+U4RrM({PZ7yQON)?Q&;a9l>%O{(a+IxrsF2Y2p`F%sjU3+St=xnM0@trWo`LqppsEP?@HA|H)D;}M-
+tWHLUhTnWycyOX;3D(Z5giyQS%w)v7{74eUr4s;#fa2IMuN|+=LQg_L3%*6}wj>W6r=noWtG7x3MDaTMU@l7(@9W+knw0RWCqgzE=a4MsRjoT65|gD^wk;YK
+RC(qamgx1pwmOyD>I&iQhJUbfE)?do+*uZ|bB<Y043tNJ*}Bz~(=c|2l)?utgGb7raK;Q%GAq}EgI{Ww^v}-
+?P@dQSV5ZCiaPPJ@=p#l)_1?PzRp_YwCo!|k3de!l4as1LQz_)CYCrm-j;O`N?CrxOA~>(K@5j~5Mf5vuV+#>?BA=LpkqA7Q<-+vC@4ielyK?k@Oc-
+#gdnzz*s<es+W+N0qU(@t0v_k|MElB{V7?&<(Pl2y9S2`Eo(JBXf#2Y~o#+3~=mrTnGy|g(8AzgvLIPcitu#Cf$HKP%t^sKWk!z#$7uH}87{HQW0o&E#**Jj
+GF9VLexQ=6NF)%{&Eu^P<TzamP}$o?==J(RZ8mwgw&JCNIrJ0<+^0l_qaW(hGM$H@DpnE=qmuKQw|rHLb*@>v^yg0rp$U8<3eF<Uz2n`Dy~IowCgJ?zX?U?B
+kn1V~q3bP{P!HuPCrUm`RHp)(mNieq;xw}Z4D=K0RetI+*AJQlCI4#Z?O+$G_5nBcJ{OllTq$W@j#yu(xLsR-L<Lsm9$i{mvn@t|@Ibr-rPKuEyoSIDp$8y4
+t9%T9y*R5K!20%8zVR!(}TNqJZ6hm^;o@)L_;&TkbbOBu+X>)p~iufUe)?hQ$k+-
+q1sW1`K9763EcZA!ZHZ#Z`bI*@oa=8aZQ1@pRg+4zXL?o&1`Y(veg7!JCB5oN84^L0<R$aP_*!cb;;ShbW=co*YnZ_5YHE<3uQ2(S7hr7%?*QnbWTW=B#0er
+Gf+&1SZ*e;~>2j<|{%EUpD83o%4~^k-&P-xFVB!CexeNwe%pHo-(i%z<Y^{9%^_{Yn-REaV4UKJGtWt%SlxdAD`Opim2}8RM8AopPft?M9OmQ(+9Q^Ml4K?^
+B7JjLwROizQhwPq}&1jcs09g>YWk$+tJ*m-NEYQIWmSpBg0^NMg0z7RG%Y4rvtWn;{T9C`9MH37{wTPJHeZC9x2Fi<23MV=wsLLY*npEn2mODt2xSJj{m<6-
+k3~no;g8Pi|`)l0!}Q^ik=lV|lSo=Z`75E6<I2uO5B(EI-FI>L`yzyKJ+{Ez?7$IE<!k-
+ty}PIvC*QC{}Jvn7?Z7wXGL0&9SU%Jp&QbzjOim_wW&jy=?yEC{rqJxB0cQ{tQ19;TE{I+a+UcY;U;qMt0A9aYP<=fiYFTN)HQ&i83wfvA&Eo(4X-
+RIU^K<yXU!hzVg#7yIt{CORM%KZj~)1n=4cl)o6Id<J&9o0w2<6P$O4jsZAaM=>C8SHsnc=R0)r-bTNYjBYaW~V2LK<8e1r;wLqC`_`wdTQ4S-
+>eC7**k<}Ld561`S5Z5T-8@fiNp7{vvb*i)ao;Wbz%TM?^x>7-owB=cO`S*O8R7>YT@H@{CFQM*j;?Fn%$UMP6aQimk{l|$(7YQ#=6`X+G%`Xz?-
+mVEY^#k>J;=@zCk~Qz<=5sN4xK%Mtq>|<4>UpM@j|&lo^b6(rR2laHR{oKJnVD9uyw(V~l$e9TdsMr;KnkTmmK>_el0{T*ou8P53c_i~?eCc>!1N;fH&Qzdd
+)=2x&xZ^ERy~i;R53a*p!CmJfiw?sk(WU%aHXW{v;3?8GS^&EvP&B^>;+U+v-
+sZ66V2;JhEMjs<ghk3hrJ2|`H%C|4y*8p19x6OyCQIbi$8Z=Od@nur|B@u|M`0IQO=U}Pwb?^Tb|RG#_%Kll6Yw+(Ln^Pq`^OG>`2*NWX-
+C*s|5LDbtWogUtzS7Y<S{0y71gg`Sb)<5V9P`ux3|e*t?GBoep0JKRNz}(J<0u^pp0xFFb*yX%vtXD5m)HE*;$5j7PaG8Mo}Gnshc^$9?<7Zl=w&IcA3wQ>x
+n~#6y7>=iRn7OZLK6*$?G4_`#h^7-q<s4X007niHd<_>Dhbf`le4%%Awvt*vh@YYcEnN1YCCD&W>)dR&V$F^kD`Xshgm4H0AV@<3BQ=$o@{-
+SaZOG)|SqE;WUOqy*YShE9}uH>P*z{k2Ivp06)^Ifydw#U`RNd+{A###tU~gRti4(_xa8HMLPN@#XRNh~RM!$tg>L8`kfPAA_;U*qWkB7@z-
+BMRAM)fNJ~=%V=E@wkURbartqp2Tk5I1C7%{UZ_L^!p)=IL8q;H0X0BezqX1*+OfHn<MathsGE9ts%9~oX_!na?|cd=PCwNBiMkLkJgF6&p6Qp%LoLh#SROc
+HBWh~l7F$uBN`PvDoPNoa9bE%9hktYJ$st1PVLZglC?VF2*;$=q7^lA)JREkzZn$t3;6mSXgJ6teeY0$R;v(M1^X$SHLIeAqXrI}EpeGsqk<rtX7XSqML21R
+9w>5oZ*X;I`QthPV`U<vLUCOmtirx4sI5-
+ATZ{e`AZ4HWiQrv_NGwpht>u;=5o!BfO44Q>4PFw!Id7zuU=RF6n_}&r_x2Ep({k_`0PgYxyl&#a58=l>Qq{2(!mo^_!Th*RCH&0(;qJVBNn~7Wdk-j@-
+HgI{}`0v8qSg<hT6`fv;i*Us8oBU(!IWHK_>LFo1^+X%YMMb4=g<Q)tFp6l4bEz)JM0N8z!e?eDzndQ#k)VF;hs4R-
+`Tkm3$}9NLh$xPpX=@Gq{fmFHa+3)!LI^VxHg~t!I+|Iqr?0JML3}|mUe71O?J7*8;>}DEzle?>*^=$o&{9Gx$&Q1~FE6IFbssEKVODOB+|aX%MFQL&)?1cX
+W9Fu$Y?TblgnMzj5xxct32T9L*wLN>@Lpc~2PQK<ZR%%&m24N;tTS>kLWVL~4sLs{6P91a*#_Mx5n2Esq49*C<0X^Hgfgsixg#SYDF}CSv&GtvMz;aX$(h-
+&optC>G{|q;AhdT=g3)BiRAK}&s4w|D(6b>1_PNa>tsG?iyo1R+kuxLV8u_JmPDhoI-
+J@`jyu&GMg^aw7%=@=SetwS!307}yYBnux4heyCqoWP8?0hQ|ZCHDiWqkAIqOQZ$gux?{Bv901j?xWhtkd(tlvQFxbuKyRZf6taP{yRhiLEsu(E9%|yla~2Y
+o0m^tzRZ+h;KTN<T#}SB)u|%M~M=KxG(-MsZ`-
+M^Fd#us=k$*3nE`fXcBuFH`a45blmA<AM+xjM$?l_9H}hCv)as3w;CyJJTHw=Nnw&JMqN)f^PLIo+O<dTxF`3>Sk9dgwVWy0(sg%H!&?)x&MH65G-
+D91w7^eBS6B&Lv}K<=!xZJDJ_ft%OZg*uyyYH2j(=^AO>krJ{Cq7<S>~2QR$$G}SI|5N2STk^Lt-dv1{$>bna-amX?q=hO>Z^<T(TgJLJn~bEQVkkbGj^Kq5
+J9nmvdIsw#9-cUgPxeSjN!7GNQ&l^VX0TLbqKf$>5GS{fk@lYfIPW%sA^fC<|@)nu*17*33XaKJQM27SNSz(?@c(jtwT)=TL;24MZ6XZ5=-
+e@_21EipR(=vPlbP8b_S~6#jy^k6o;+f%0QD76a8l+ZlI+S-$}NtuNP?!7?}5O(Z%}qdQ?L>11ltxcN-tV=U=8E!Oev5)Ad}aBNFg`CF|;LK+OZ@zIZJh;Ur
+$$l1}xUZ&0r<<5e61ne<2SGlq+chEmiKO}g$DJg%XMKnd59iOaY?x?PE1_PvVnR`5@N=S2toU<Wf?_tK3BrAR|&+Gf#%iG>4QU<Hxp%3f~1zorR-
+XucKG=I;>Uj*)qpL)Wk8SxTrq{%o$D+H&Hn^fk&o!U|PVP-CA{9JRO95=yNs<4GeC~+EKpl-SD9yeD)SP2Jn*lliM;gS@Ohg2F4)XFSwVIwgF9@Y&i3*gMBX
+BkpoDZ(Y<lR6DQ46hvgd`AYb=IPaaa<rNF5v8tn0M-7)4*87W7-uz5j}wdn96uzxn*5`<Vo_-sJ#Ml6ud!CIGv1?C(9-X2PFQxv30q1_-
+(CTO3En!40_((4Ihk<`oIw!ARf5}-
+iU|$hl5q^oWw;uNOLdeE$bMYn;#WRN)RSbp<ipQ^7WKWCjg~8`(SsvulE&>lX*o4;!eK|4jsJ;ICLafP1Nj@JGaVB1VW|l!^1iOhqRPjE#n30^B|Uo>mo+tc
+fs&#W)VGE<bTyVhwzv2ZuivY_I=ykViZ4yyuu!9muool(wTm@Sj@p1~{$tY2lPB%W8~t~P?m7$w{w+vSJd*gQy|(;vd7xcQ?Hiz&GGHd0SS)++eq@zZ{-
+H0MeTufh9F^imt0MFK*K#=A!#|Kz%=kA@2W&=R$q1@py#<zI6wS>tf^G^M4F9ghdzE!Ht-Mf|S7tl-OQZYY4;n~GtUQb<TvelCgv#aUlKM5i{RF7>pdD@Z0r
+7~g;#x~GDY8D{!`g~@%)k5}7a8Weg3^pJhu+P1+V$_6Eo)qBsl~-
+wP>XRXO!|&_oS_La`(E_RoQ=@8xMY$A!7DO2*6|;nImVQfFi2X3KK#O8B{dTADggMUq4=A|N<58p-
+x!1SK$9ebs=lpvO;}Nxg>Snr4^UL3d@fNvE*bgUYY+jan3_N|l)hdFBZfzmt;S)@<*_U>BN48^$7ORLvM2(O==G(r8Xr3j7*ZDIa|J+VDd}o$W?5S4lSw)uo
+s->bfE~eLv02S|V8wCGh-nBt&+CB#_He#$5rc&{I%qF0EphU|Wy}h3PAtY1Q-
+;Ihrgp`H_Tpv<RwSa8cQg{>bA}TzA2KauyXHNW7Zt$i3vo?U`&~$eHkbak5Q4GCpin#!Ud76;Dl6X<FcY3_nVZ}yd#DtOg70SV7BpUxVxPSCKa*$FxKk+a^J
+YE;o>&z!4)2sTWWrAPE=-
+@N>mxq@XQzXVK#$JMisDU!Zg{w2!r=kaxpv=qlF9+~WU?wagx=l%j4^^cZhzK^t^_`(DG4#%?qNczjv>!q8xNso&i8{^U2zdS$in=h#+Of3TfYTyFT1a0pS^
+sK;UUAFZt9j{>-
+G9&_7XH|CBK?<vL3|2BOM{vP{4MQn&jNWkR^*%Swb&7!K%)o^`uxPT&1C+!``fqoZDsiBX?};_g6X3rnP#so1BzAN+E}8x~*|b*Di0Wz#nq<gHM|-
+R>!F<6dqZ9Pf(ju&v-hE5#P8J@2r8!-
+fdlnc5w#N4rc773?ZrM!2+E5ZO^efRzUG~f0f!29}ldTH8Wyxg5|W&O$>A9TV_}zJ4~A^Fh{mis1l@$I=zMI#z$bDaG|^*8tPs2jfmD{NLkV9OI#^H!-
+Ej2=mij!2A|xLn}u_mR4-xKRe^dBgjytLho*N;bl%}#NNqC9mLAOCjUGb=MXd*v!YkyP?`Rk$&;AQey>4h!b5U}}2SIaf6W_z-CNaGZ+=*NyZqJCjzbGGkwh
+7G)Nn{&@c$=tW&cntm3P2<zuE&p%W8xf=D)lc@6e~_2v^zNF{Y;sCfHb1H7+(*1G#F9PbJNONiOe2TY{ow6g`-
+E2)C4$jh~h58x#`Vqm%@6<8|+avfVf2o&{2d>pQTYFJ&g0_@Qq1Jj@Cq(>6T=e)hBI)2(5Fyl^rak2svl}Bg3qZaj_v1i(^B*q%nwEl~)+;jO@r_z9>LA#Qm
+)zOW1su6<X%CA1b%uH{6mghY0qyGZLYnJ*7LT)l1YN)AWkp8D4=b5ihG~;n=W<<g(DF?`!G4IsoK)PUot`dO}0v1PX#P#d#GfgLAZe))29#3K{-!%bVs-
+RcqfLr)3;?JWvF8Wi`tJ6}nH)bb>DD#V-mW6Iu?og`PVDaLFMjn(3(d;T|`J|JKY%^v3au;Jy@>xK^g-J+~#s-WA-%g9@Bg`zrR-YMX%nBmZn#wbysWAQ6u_
+a303F(dC*K1`TGQ*m5qoT3j6bqA{FPE(jHFW`8whgRVV9@)wH1s`Dv<ct@LIbs;w&4az9PZK4%=IjL@S^?l_p%6kSWvs{3?T3%-
+b?~RODh8BzThC^RpRR#^2x@h*06^J}3YjkvOg!U&gTCmkiztjq6sH>^!v(Du64Yt3UgYECKm&|E#@7;}w(ri~uS)c^#cwqNq(v>In>g;+L+MzH4s}(n!RH(1
+B`6Km1FnGSbL1g<u8buOI1;lmuWGL1{9MTjui+96WIEoLMuuvC5`XOryb^EM`<n~{@*(nV>EyA<S8JrTm9QBJGg+hj+pA1?kf<y462=cdsmlvy-
+(aRNaa|VeaGN8C3jd>m1bu=SWlk>HG2li%aLZ#qAt9oeyN~Bs;z+;tnZ25hn4L$|ghG0H@NS^}&Zn%6>71G(csCJ&UkDazIqJTKPW8vvH@EmsWUBL!Wq50Bq
+PSn5JLb5G=>SjAg*WEORf0&NPf(TwizAimKK*VvuOCHuycIgrv`Z+FW8^fo-
+P|Wj8LtWuCR&yw9PdSHp?7tWgrYW?cE=8m+X+%2hM}M`E|4(e4IQV%!p@HwTk^9*MWqX6*HV@HG{-t=<W&j&J9p|F<f}I(uYU261eN9b-
+1GKw^g7sM8eG6AE0Dn{jxr$#@nTJU$HfJ};wOOp^+$9h}Y)WUq)YOLy;IJcsvzn<Pn*+DuuBjGBzl<=V)Fn&j<SmKR*4D8Xj)~ak9K%KqYeka>1eYGKMZKKZ
+lKP*i5sgn-QmM<QOTA04kf|K)p#G|;D<NM8<A;He0@7>l-
+JSWzvLAtX6qCN;rm}N+E}2VisJ8g)uV^7bcL+a^$BT&MmI|fHjGqO6&9|nnoDk_mEzh`)9Ef@|&s42bRNp2rV74=)gBh|tLp}lk%<06x!vW<oRgYYw;Pr8;3
+Z{^eic^y3#;1jsVuO9ha*mc#Ve^M8hwEIL3J7@vIHNOhmn1SB$xgB2nDlV5?LC{@PFj6RZq)9A0~Q!w41(dsuetfmHs^zEi?y3N=DIw#dGb<ZKW+MNCDap6P
+r3SID!V9htAY-kLL2%QhLT5r(evlJfLaJl(axh6adRS0_dfiYtF~_<XLD<z6r^wztilw**Tm2RF;wP-
+5r8cLX)x@5mTKML6gnWQL@a?SvLjwhx)BJCk%JHPJj~65_BwV>2wdB4{R?`$#fgNfrZ}1$K7rA`AsuU~yH25;vZ2@W$<~p(tFV0-9AHn;m<{+1V>5-
+@5BdUCr4Qn{2iO)`b!)(Hirj)ob6Sd!2^%~rr8aj^Wp1470GNCqDV>an&6)&>3p7ah7lklt=W0mkHI)nC)6R7}ga>?|?l*jxoxuEwXv+ObyZKcN>={0FL);N
+k>jDG<{v1T(%uBT#gQCS@<liDS6rRCrgn+U{JPkD$q{44>;;*sJ##-pm-
+)c8XW}t=Ay!I~e76aac5AS!biJkE%AC)r{@V;P_^WazK+yU8rb9`4x(My<yM7~R~MWzywimzt#OA4t&HdRJg^#2GB;a1=snnxa_PCUW){lBaO^aG#c`FcUt-
+Gw@srigKhfiB17;Jl~;^5?x$EFLzaJBSGjbxkdHV-
+aT1#R%O@C!$jqwADRylnt@FVV<b<C(Z~mvpu6JK=Ng7zI??jezZnfq*ah)Xb|p-idu0yl)p$S3s8hcOpKnb;fHeN4NYTVX-EyE(`!>V*Y6*|z@M<YTC$}W7i
+Q_vqGA68N0N!6JKOlOcISl8@7BzAM54|qZBZEQDFIO9A-wK^S&>JQsL^~L449)*mmlYlw#s|>1Yi9T{x}Qof-
+3EWNBZUEV*AFYd{^^z0ZY?~#ti>pC+D||w#bIBq{4j##2$K8ssi@2q-
+!Z++XM3iy^zap;wO7P^3wI3{;);Vm^uc7(!5Kv31h63Zy@&KqkB)S^|6Y|U|h0ESG(sA8Agcd=uYTRfkf24BA<%5pkkWD8(+z5`1CJYa!Em!!S<~O!yw2wZ#
+mdJE|_?528`_rZA+e%l%T+*P`f&5ku=9eib!*Dk~vt=Yuv9uh~&B0R}iE%3EXnyUuz!OR%*yeFB!X+b!EX2nNfG!;PEl{XNmy@n<3q1Tv(2Y8B#s!x6LE;h%
+fj?*m#$3X7k}KMJOt#ic27O2&=+2>)tdDCq27<B-gtb-
+c`8^(=mR8b$N}?FWmRr4Xl}7$kRp=MY~p`hC6<v)v%FEhmhlakU!%>wqI$)_UDi~RTzpuF@yvw$DiB|iJHH*SPB#kM;FE=+uIr1!V-
+SB<}s=mgKMb(&l`OOqmW}0g`K_UnB8YpdpZj%w7+wX4nW2z7!};OFNn*7uTe9HVF-Ch_h?@#@`p;1fXfP1GI^tHf_B!Roc7!Eo}gho^s7EeB`xLPEGgfhLzO
+5e=pcnoFHfGrh@tgk?wN@)k#L&LI((7kXIs@}Iye2h@lC-&qcc~O+*?0>(Rwe}ZB;cJ?o+G(O)-5do*N0Yzvxs=$e5XxsE4Z^w&P-
+@e^%V0JP#96SR%I=(m(7Jyr+k_BOO8Yh~W|P4#~RNctUCpI$G{^eXXUHI$C^=f}9##8>d)K4m8JELryrK(`iMD5$XSteESG`^4zYv;EjXSPNxr?L^!Dh9;{j
+ey!Fr2Iavn|`FIh3inj~woo1Fz=2rk29UCIQM+*(Nowf=SJ%oYFf&xT9x-Zg+w~fLK`^u!<5MkG(Ow&TzALl^j@h_e-
+N1W(Ox^#DfwPuh9V$$0j;)!TK670TpG8(V^0Jze#K3y9`lK;LFGG1(AVBC4^;vY4$Nldi0yS}7aE1oX4B5zHppzJ-
+I<8!Kiy5g7A^1qgUibj!JAx?jm<vGt~L4~n#Q)T`L%kg2lu8<+TKCDo@XwP5lk6LUM3%)>ZBdZ`2$GZT>1@?&wG)}9`dr7-
+)(3KF38!eFlpe6_FGjgo1eTmm9w~4MhOD!8{kcIl9wJlQ+DMbgHf7aE|W4F~M>^DTYiss@$y6N*<x;14`p#S$?;F-
+ckEo#=`;O1{_{AP!t%uUzJ#j4*32^~R_o`pTzF$14o3zjLPe?`@5HfGDvD281T;sKJnau#h~`X1%=tZGPj4iKXM`g&HDxTu<S(A}4w?J0?B%2t)mJUrMqfSU
+pg`4BEDlWZKDigOIyA^$=k;D67b_Q9@mcb|#xI;87He^;_o+i>#E(sY&WFrY^;=lVReqeb+a;RlZWfOixIq^0#-
+qC!@0M9A_)QN5$ebe`k%5o&p|@|_S_#xe`+{-
+Ed>r^JP#*zj<e9imSiOEg5925*;n8WZjhx_06|Qn`$?d~)*owpQGF@h?O8jo?bGYcA+lnLc?{)HigRGL~JJ`7}WwoW1bG1Ik}^o<jkRcDmws+6oXGvcRtCEV
+VCmNP3FvNn*AW_BBJ$i$s2Liq_0ADYGyV=*D#=1H}_;esK=VVl<TH<ccSUeOsJZxBH*6p~8gmTlF?!(sB{wFTJ6!9FsHI;`fMT;OiQ23V`FewRcSU+9Vy;vG
+iBQDbhJPLAX>^6WlHIGE4-
+1{mAci;8j_QduQ&U=Xeu8PJP6U1MPFpwIv|JW$Doe(h$Pr^!*F<T#C<`jHZ1Y7;?L9{78O^61qrUdagv^g5IG?yOqq)w*buP;^i-
+5_pf&c*lrsOLXL;I!ViA3_p0FYMNP~b5U^VvlmOHOW{r8Q=`I>yBx@_B8i!IUXo-
+*K9c>>#qpwK1Vo1WvUQ;IhZ#PJaeb8M;xNmh(HP^EJ3eF0G#Oh%LxAb@LK47)gVCps?s&+&x>8tNskde8<0vJdHF!>!*^m3SbrRXwV>t(mDCv|(0a5i+l$$r
+Mj(<M1b1=Df$F8v21l?d^35*jtErFI9u6|CHirWewb?5y+z-HGOE=`4NQk9d{KBPNRf{Kyugec?TtcVdt&kn7-G-
+i1d)fvwCx&X)4*1r$ru;=Adj!}B9xxlJ<fOwnb2v5t9^TUF$0LSy)<K)@7jn3h}uOX=x=zwV9&aSj~^NePy%pQ#C(NxP$ehz7=!S|lK6ERbT3&aSO3`_FE$x
+tJ*Y0cy3QeMj7sOl!p5OaAAhu$C6@R(P0=`(6$Y`NDW4b+{YMm_$H|f$ieD_2B*b)!cIAw>B1Z@%*O3MOHCyb7q4Dl4cv};W{c5o1%E~_`j>-
+Z1#PIX~p46C}1tid|%=_yzYS)c&Ed^g6I1Ph$j>_>;rS(*OVpnI(hm?LVd$?q_Td2LplDJIfR1_>X(3C@z%a$4yW$HzlqT63`<Y`J^~+eL|rwieq3dw4Y;*`
+Q#}pKumzfb!7<%{il!~{Z|L7UR8CXky%^WlsG}w_y29!z$vrKk<_`6(l#Nfl2-
+H;8AXvaIKoqqo^J?9PxYMt6(SQc3&^c#fS|~ZuXnBB7d^#s@&hcIm$o<V8&;*K-uaNAM-G4r-
+#Phv_jgUy^Z)SlP)vKX&<Pz@4ZNX~QI49Q_>@R3acD@<0qgqb+$!b*m(Njs*V~2U(`^TN=gZkX*o1b{`$AMWXfrz-DGol9Y8^y(`iAWcTzAlog_B$6eb|#|0
+bFNBD5XNh9Ve45|1v!}Ay$rjIk(Kq%aF(r_YF2}Uls<ed!1WD5PnQBsj2n;p8DCn51aOx_dXhADT2rxda{BJ`xt|6|5;8aFX0fTo3P{7Tt-
+r}746*Q%9r`WUju*415Aol}2mI>4>ojN}(;`a>e=(JewhSPoVJOu<O8sf5Rb8KeNOGo7Z+ElR9x55Bm`f>|?+^85VII{6c!~ZAcR9O`3LT58i|BM-
++*rF)@t}i?^t8%aRXI_m?UO+u-
+x0%62~mez4^rk8UF$45n48BxnkVenbr`9fH1C`*1);(Kg3|5VuMNDO%HYkkZ7ZvO*ccu%YYyHv2SIDimfp!`iI^1;X=?lJc2y%KY+||1{)6W{yyacYmGUAFj
+wsO;JGKNL{9&mAMeIJ28!{izuRK=JCqX%jXesOTTX>xAYp{pxRgu-
+nyFQna#3Bfg@2txww$YdkJdOEWG|%l6F82S}?BBV=1vXY7oU@7HCS4D$ZgcKUa&))%1l=Gkp9Q!^ehFIhq;kRoyxh!sb1~CuCZeI!vOWeg+zIW$Wri-
+FI`oMTJuUB%T!9mXxOk&Cy~tV&`&Y9%YV9EnU6D~mWT5Dz#2iH1aWhpHMwbKb^{tOT4T$PAEJ|A=q3){cNqD-BB%vw2`cCNQEXO?_Q~8pOEcqNMd`<$Ta4+L
+HE7!3-1KL$9`jd;{;H8ka>3swXdHS9Ut(DVyN-^FYe6iOU+_DEu-z31!(6FzE+0A>6`;t<t2@-
+rmT=&SOM{t){bEQR|d3C7rFZt=h=jPHpJ9=mc#2|#gK)ZoY_o3w$Q89K5cXOd>idtQe<s9kyHn2cNJ~cG%j1Bss`$}ZAf5(r|p(&~K{nk)|7#J6~`yhsKAf|
+zgbj1_FNl%<Sa%LZ%JsQ+(X=Pzl^3jSvG%qLOo9pNG+Vg1$Sk1O&p+Zd@U6Qx2egXB}_a}uk=_}qZi8YX6LWr#B>0MQ6p@N)%v<Pc2?CJ{8iTjlW7w1phHM9
+Ijcal;9yjigdkH;RL@FAnkHT*R1-
+vI#lWiw&EUo&F|ePeZ0?zXf~v8#*aA=<7`ARaeT>a^+rw~{*>DnnBBBnHiif``k;CNT!`o%4WyJ$V4#9ZlPuN|kER5#;+%B^wYhxlgORrO~+<Lsu2?)!7=#y
+FbQ-p-tX9C7miqt%*&7K95wle`(e~3Z|A;Q78nu(z)&sEYF|FX-
+588E9<588J<e$GuqT}(mmjC$t5gOic<&8Jk0dZu=nUa@$|%@(A=u>gP0!PZ8DrbX>8OAcPmt&ezPa`7pFNzeV!bDvtt9J%_u*jcqtw8X9S{;ljNgC%DRJ}t<
+GZ$$hU~>29J#2VQW08g#Bf201)Dt?~yKstb^an7{7=aD>`lhy$;M@X{Vy-E?}8(bw~OX=bZud*n$tSTsG26<G@fBlTXxI5_aVYV&Tc-rO;U-
+^3GBC5r4Qisf%piwIn`SKhwRV*0Tn?=s=6b#bY1`owH9G(jvWuo9%d@xZy7I8b0QcqW=ABFBy72oJdLay#>7R%)RZ2sgB88L@_DiTh>3J4C6vt`wO-
+Z?SH~bkA$hG>SDW|mJ`++=;sSO-I1CLSwHiZWowh~?o14OD2yj-lJg<h=@owhHx@tKy&xgDtT01wwK--tA{x_eH&8c`M{aTQ)wIGy=`vzl&N8T4@%7}fkHF^
+8=hxO!o^q(g85l#~ud7e5ouM~!5kg0QXj-
+7JR&sM7MZZ{ZVHq;ik|x)uc9YnkvC7S1`!tL=ahKxH9=wH9kUeAr9?=pl>30eaBUOPUnZf8=<>Kn@u*#gi^5*L?@<iS^EM-
+{KM0g%i&(a4!@IR)l%{fWLo+OP+%%}qN<L%qljw4(0QC|wQu9t2?+PAvSLd-Z=#iqL#V<Ny3{LME)-
+Jbs`xiT+Kc1(bE%Dipp!e`~mKkhFYll{rpLXq9D&nskk0nJcez5&BmcM47n01W^DbFx0?ryAao00Gd90kr!A1kKm6vBYQl0ssI200dcD
 """
-
-import base64
-import copy
-import json
-import os
-from pathlib import Path
-import re
-import subprocess
-import sys
-import uuid
-
-import numpy as np
-import pandas as pd
-from pandas.tseries.holiday import USFederalHolidayCalendar, GoodFriday
-import requests
-import yfinance as yf
-
-# 検証版v20と同じ開始時点から、候補判定用の基準保有・固定枠を再現する。
-# 実際の通知口座は state.json を引き継ぎ、過去の保有で上書きしない。
-START = '2010-01-01'
-QQQ_GAP_BASE = .010
-SOXS_MA_MIN_DEV, SOXS_MA_MAX_DEV = .40, .60
-SOXS_LOCK_DAYS = SC_LOCK_DAYS = 3
-COST = .001
-STATE_PATH = Path(os.environ.get('STATE_PATH', 'state.json'))
-STATE_BRANCH = os.environ.get('STATE_BRANCH', 'main')
-LINE_TOKEN = os.environ.get('LINE_TOKEN', '')
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
-GITHUB_REPOSITORY = os.environ.get('GITHUB_REPOSITORY', '')
-
-PARAMS = {
-    'base_normal': {'tp': .26, 'sl': -.15, 'hold': 30},
-    'base_alert': {'tp': .26, 'sl': -.09, 'hold': 30},
-    'bb': {'tp': .32, 'sl': -.12, 'hold': 30},
-    'SC': {'tp': .30, 'sl': -.15, 'hold': 15},
-    'OR4': {'tp': .18, 'sl': -.15, 'hold': 15},
-    'DIP_REBOUND': {'tp': .14, 'sl': -.14, 'hold': 10},
-    'TREND_GC': {'tp': .20, 'sl': -.12, 'hold': 20},
-    'SOXS_PRE_DC': {'tp': .14, 'sl': -.06, 'hold': 6},
-    'SOXS_BB': {'tp': .18, 'sl': -.07, 'hold': 6},
-    'SOXS_MA': {'tp': .10, 'sl': -.10, 'hold': 6},
-    'R3': {'tp': .18, 'sl': -.06, 'hold': 4},
-    'YB': {'tp': .15, 'sl': -.09, 'hold': 10},
-    'SNIPER': {'tp': .16, 'sl': -.10, 'hold': 20},
-}
-LABELS = {
-    'SC': 'SC', 'base_alert': 'Base Alert', 'base_normal': 'Base Normal',
-    'bb': 'BB', 'OR4': 'OR4', 'DIP_REBOUND': 'DIP_REBOUND',
-    'TREND_GC': 'TREND_GC', 'SOXS_PRE_DC': 'SOXS_PRE_DC',
-    'SOXS_BB': 'SOXS_BB', 'SOXS_MA': 'SOXS_MA',
-    'R3': 'R3（20MA回復失敗）', 'YB': 'YB（金利確認付き40日高値突破）',
-    'SNIPER': 'Sniper',
-}
-HALF_ORDER = ('R3', 'YB')
-HALF_ASSETS = {'R3': 'SOXS', 'YB': 'SOXL'}
-
-def canonical_tag(tag):
-    return {'sc': 'SC', 'or4': 'OR4', 'YB_40D_TNX': 'YB'}.get(tag, tag)
-
-def strategy_label(tag):
-    tag = canonical_tag(tag)
-    if tag not in LABELS:
-        raise ValueError('state.json の戦略名を識別できません。元の状態を確認してください。')
-    return LABELS[tag]
-
-def lot_for(tag):
-    return .5 if canonical_tag(tag) in HALF_ORDER else 1.
-
-def lot_label(tag):
-    return '半量50%' if lot_for(tag) == .5 else '通常100%'
-
-def finalized_cutoff(now_utc=None):
-    now = pd.Timestamp.now(tz='UTC') if now_utc is None else pd.Timestamp(now_utc)
-    now = now.tz_localize('UTC') if now.tzinfo is None else now.tz_convert('UTC')
-    ny = now.tz_convert('America/New_York')
-    day = ny.tz_localize(None).normalize()
-    return day if (ny.hour, ny.minute) >= (16, 30) else day - pd.Timedelta(days=1)
-
-def clean_price_frame(frame, cutoff):
-    frame = flatten_cols(frame.copy())
-    if frame.empty:
-        raise ValueError('日次価格が空です。状態は更新しません。')
-    frame.index = pd.to_datetime(frame.index)
-    if frame.index.tz is not None:
-        frame.index = frame.index.tz_convert('America/New_York').tz_localize(None)
-    frame.index = frame.index.normalize()
-    if not frame.index.is_unique or not frame.columns.is_unique:
-        raise ValueError('日次価格の日付・列に重複があります。')
-    return frame.sort_index().loc[lambda x: x.index <= cutoff]
-
-def flatten_cols(x):
-    if isinstance(x.columns, pd.MultiIndex): x.columns = x.columns.get_level_values(0)
-    return x
-
-def calc_rsi(close, period=14):
-    delta = close.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta.clip(upper=0)).rolling(period).mean()
-    rs    = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def fetch_data(now_utc=None, raw_override=None):
-    print("確定済み日足を取得中…", flush=True)
-    start = START
-    cutoff = finalized_cutoff(now_utc)
-    # 不要なティッカーを削除し軽量化
-    tickers = {"SOXL": "SOXL", "QQQ": "QQQ", "SMH": "SMH", "TLT": "TLT", "TNX": "^TNX", "VIX": "^VIX", "VVIX": "^VVIX", "SOXS": "SOXS"}
-    raw = ({k: clean_price_frame(yf.download(v, start=start, auto_adjust=False,
-                back_adjust=False, repair=False, keepna=True, actions=False,
-                progress=False, threads=False, timeout=30), cutoff)
-            for k, v in tickers.items()} if raw_override is None else
-           {k: clean_price_frame(raw_override[k], cutoff) for k in tickers})
-    if any(p.empty for p in raw.values()):
-        raise ValueError('必要な日次価格が空です。状態は更新しません。')
-    latest = raw['SOXL'].index[-1]
-    # 最新日の主要入力が欠けたときは、本体の過去のffillと区別して停止。
-    for name, fields in [('SOXL', ['Open','High','Low','Close']),
-                         ('SOXS', ['Open','High','Low','Close']),
-                         ('SMH', ['Open','High','Low','Close','Volume']),
-                         ('QQQ', ['Close']), ('TLT', ['Close']),
-                         ('VIX', ['Close']), ('VVIX', ['Close'])]:
-        if latest not in raw[name].index or not np.isfinite(raw[name].loc[latest, fields]).all():
-            raise ValueError(f'{name}の最新確定日足が不足しています。状態は更新しません。')
-
-    df = pd.DataFrame(index=raw["SOXL"].index)
-    for c in ["Open", "High", "Low", "Close"]:
-        df[c.lower()] = raw["SOXL"][c]
-        df[f"soxs_{c.lower()}"] = raw["SOXS"][c]
-
-    for c in ["QQQ", "SMH", "TLT", "TNX", "VIX", "VVIX"]:
-        df[c.lower()] = raw[c]["Close"]
-
-    df["smh_vol"]  = raw["SMH"]["Volume"]
-    df = df.ffill()
-
-    # インジケーター
-    df["rsi2"] = calc_rsi(df["close"], 2)
-    df["ret1"] = df["close"].pct_change()
-    df["vix_ret5"] = df["vix"].pct_change(5)
-    df["vvix_ret5"] = df["vvix"].pct_change(5)
-
-    df["smh_obv"] = np.where(df["smh"] > df["smh"].shift(1), df["smh_vol"],
-                             np.where(df["smh"] < df["smh"].shift(1), -df["smh_vol"], 0)).cumsum()
-    df["smh_obv_ma20"] = df["smh_obv"].rolling(20).mean()
-
-    for n in [150, 200]:
-        df[f"qqq_ma{n}"] = df["qqq"].rolling(n).mean()
-        df[f"smh_ma{n}"] = df["smh"].rolling(n).mean()
-
-    df["tlt_ma150"] = df["tlt"].rolling(150).mean()
-    df["tnx_ma50"] = df["tnx"].rolling(50).mean()
-
-    df["bb_mid"]   = df["close"].rolling(20).mean()
-    df["bb_sigma"] = df["close"].rolling(20).std()
-    df["bb_lower"] = df["bb_mid"] - 2.5 * df["bb_sigma"]
-    df["bb_z"]     = (df["close"] - df["bb_mid"]) / df["bb_sigma"]
-    df["bb40_mid"]   = df["close"].rolling(40).mean()
-    df["bb40_std"]   = df["close"].rolling(40).std(ddof=0)
-    df["bb40_upper"] = df["bb40_mid"] + 2.8 * df["bb40_std"]
-    df["ma75"]       = df["close"].rolling(75).mean()
-    df["ma75_dev"]   = df["close"] / df["ma75"] - 1.0
-
-    candle_range = (df["high"] - df["low"]).replace(0, np.nan)
-    df["prev_upper_wick_ratio"] = ((df["high"] - np.maximum(df["open"], df["close"])) / candle_range).clip(lower=0).shift(1)
-    df["t1_upper_wick_ratio"] = ((df["high"] - np.maximum(df["open"], df["close"])) / candle_range).clip(lower=0)
-
-    df["smh_ma_20"] = df["smh"].rolling(20).mean()
-    df["smh_ma_50"] = df["smh"].rolling(50).mean()
-
-    df["soxl_ma_20"] = df["close"].rolling(20).mean()
-    df["soxl_ma_50"] = df["close"].rolling(50).mean()
-    df["soxl_dist"] = (df["soxl_ma_20"] - df["soxl_ma_50"]) / df["soxl_ma_50"]
-
-    df = df.dropna(subset=["qqq_ma200", "smh_ma200", "tlt_ma150", "tnx_ma50"]).copy()
-
-    # --- シグナル生成 ---
-    cond_base = (df["vix"] >= 20) & (df["rsi2"] < 6) & (df["qqq"] > df["qqq_ma200"] * (1 + QQQ_GAP_BASE))
-    cond_alert = (df["vix_ret5"] >= 0.15) & (df["vix_ret5"] <= 0.40) & (df["vvix_ret5"] >= 0.05) & (df["vvix_ret5"] <= 0.25)
-    df["sig_base_alert"]  = (cond_base & cond_alert).fillna(False)
-    df["sig_base_normal"] = (cond_base & ~cond_alert).fillna(False)
-    df["sig_bb"] = ((df["close"] < df["bb_lower"]) & (df["smh"] > df["smh_ma150"])).fillna(False)
-    df["sig_sc"] = ((df["vix"] >= 35) & (df["rsi2"] < 10)).fillna(False)
-    df["sig_or3"] = (cond_base | df["sig_bb"] | df["sig_sc"]).fillna(False)
-    df["sig_or4"] = (((df["qqq"] > df["qqq_ma200"]) & (df["smh"] > df["smh_ma200"]) & (df["vix"] >= 20) & (df["vix"] < 22) & (df["bb_z"] <= -1.7) & (df["bb_z"] > -2.5)) & (~df["sig_or3"])).fillna(False)
-
-    df["sig_dip_rebound"] = ((df["qqq"] > df["qqq_ma150"]) & (df["smh"] > df["smh_ma150"]) & (df["rsi2"] <= 30) & (df["ret1"].shift(1) >= 0.025)).fillna(False)
-
-    cond_gc = ((df["smh_ma_20"].shift(1) <= df["smh_ma_50"].shift(1)) & (df["smh_ma_20"] > df["smh_ma_50"]))
-    hybrid_filter = (df["tlt"] > df["tlt_ma150"]) | (df["tnx"] < df["tnx_ma50"])
-
-    df["sig_trend_gc"] = (cond_gc & (df["vix"] < 20) & hybrid_filter & (df["smh_obv"] > df["smh_obv_ma20"]) & ~(df["sig_or3"] | df["sig_or4"] | df["sig_dip_rebound"])).fillna(False)
-
-    # ショート
-    df["sig_soxs_pre"] = ((df["soxl_ma_20"] > df["soxl_ma_50"]) & (df["close"] < df["soxl_ma_20"]) & (df["soxl_dist"] < 0.010) & (df["vix_ret5"] > 0.10)).fillna(False)
-    df["sig_soxs_bb"] = (df["close"] >= df["bb40_upper"]).fillna(False)
-    df["sig_soxs_ma"] = ((df["ma75_dev"] >= SOXS_MA_MIN_DEV) & (df["ma75_dev"] <= SOXS_MA_MAX_DEV) & (df["prev_upper_wick_ratio"] >= 0.10) & (df["t1_upper_wick_ratio"] >= 0.05)).fillna(False)
-
-    df['sig_sniper'] = ((df['soxl_ma_20'] < df['soxl_ma_50']) &
-        (df['soxl_dist'] > -.004) & (df['close'] > df['soxl_ma_20']) &
-        (df['vix'] < 20) & (df['smh_obv'] > df['smh_obv_ma20'])).fillna(False)
-    if len(df) < 60:
-        raise ValueError('指標を計算できる日足が不足しています。')
-    df['smh_close'] = df['smh']
-    df['smh_high'] = raw['SMH']['High'].reindex(df.index)
-    df['smh_low'] = raw['SMH']['Low'].reindex(df.index)
-    df['smh_ma20'], df['smh_ma50'] = df['smh_ma_20'], df['smh_ma_50']
-    if not np.isfinite(df[['smh_high','smh_low','smh_close']]).all().all():
-        raise ValueError('R3/YB用SMH価格に欠損があります。補完せず停止します。')
-    smh_ohlc = raw['SMH'][['Open','High','Low','Close']].reindex(df.index)
-    if (smh_ohlc.le(0).any().any() or
-            smh_ohlc.High.lt(smh_ohlc.max(axis=1)-1e-8).any() or
-            smh_ohlc.Low.gt(smh_ohlc.min(axis=1)+1e-8).any()):
-        raise ValueError('SMHの日足に不正値があります。')
-    df.attrs['unfilled_trade_ohlc'] = pd.concat([
-        raw['SOXL'][['Open','High','Low','Close']].rename(columns=str.lower),
-        raw['SOXS'][['Open','High','Low','Close']].rename(columns=lambda x:'soxs_'+x.lower())],axis=1).reindex(df.index)
-    df.attrs['smh_history'] = raw['SMH'][['Close','High','Low']].rename(
-        columns={'Close':'close','High':'high','Low':'low'})
-    # 本体は従来どおり。YBだけは補完前の^TNXから判定する。
-    df.attrs['tnx_raw'] = raw['TNX'][['Close']].rename(columns={'Close':'TNX'}).reindex(
-        raw['TNX'].index.union(pd.DatetimeIndex([df.index[-1]])))
-    yields = df.attrs['tnx_raw'].TNX.dropna()
-    if not np.isfinite(yields).all() or yields.le(0).any() or (yields.index.day_of_week >= 5).any():
-        raise ValueError('^TNXの日次価格に不正値があります。別系列へ置き換えず停止します。')
-    return df
-
-# 候補用の本体/R3再現。検証版と同じルールで固定枠を作る。
-BASELINE_CORE_RULES = {tag: (p['tp'], p['sl'], p['hold'])
-                       for tag, p in PARAMS.items() if tag not in (*HALF_ORDER, 'SNIPER')}
-BASELINE_COST, BASELINE_HALF_WEIGHT = COST, .5
-BASELINE_R3_TP, BASELINE_R3_SL, BASELINE_R3_HOLD = .18, .06, 4
-BASELINE_YB_HOLD, BASELINE_RECENT = 10, 5
-BASELINE_YIELD_LOOKBACK, BASELINE_STOCK_LOOKBACK = 10, 40
-BASELINE_SOXS_LOCK, BASELINE_SC_LOCK = SOXS_LOCK_DAYS, SC_LOCK_DAYS
-BASELINE_CORE_COLS = ['owner','sig_type','asset','signal_date','entry_date','exit_date',
-    'entry_px','exit_px','exit_reason','timing','hold_days','gross_%','net_%','both_hit','status']
-
-def baseline_core_events(d):
-    # 元v19だけを先に再現し、日ごとの売買イベントを記録する。
-    state = pd.DataFrame({"v19_pos": "未判定", "v19_next": "", "v19_free": False}, index=d.index)
-    actions = [[] for _ in range(len(d))]
-    trades = []
-    pos, tag, pending, pending_exit = "CASH", None, None, False
-    last_ma_sl = last_sc_sl = -999
-    entry_i, entry_px = 0, np.nan
-    tp = sl = hold = None
-
-    def sell(i, px, reason, timing):
-        actions[i].append(("SELL", tag, pos, float(px), reason, timing))
-        trades.append((d.index[entry_i], d.index[i], tag, pos, reason, px / entry_px - 1))
-
-    for i in range(1, len(d)):
-        row = d.iloc[i]
-        if pending_exit and pos != "CASH":
-            sell(i, row.open if pos == "SOXL" else row.soxs_open, "TIME", "寄り")
-            pos, pending_exit = "CASH", False
-        if pending is not None and pos == "CASH":
-            tag = pending
-            if tag == "_PRIMARY":
-                prev = d.iloc[i - 1]
-                tag = next((name for col, name in [("sig_sc", "SC"), ("sig_base_alert", "base_alert"),
-                            ("sig_base_normal", "base_normal"), ("sig_bb", "bb")]
-                            if bool(prev[col])), "OR4")
-            pos = "SOXS" if tag.startswith("SOXS") else "SOXL"
-            entry_i, entry_px = i, float(row.soxs_open if pos == "SOXS" else row.open)
-            tp, sl, hold = BASELINE_CORE_RULES[tag]
-            actions[i].append(("BUY", tag, pos, entry_px, "", "寄り"))
-            pending = None
-        if pos != "CASH":
-            prefix = "soxs_" if pos == "SOXS" else ""
-            o, h, l = [float(row[prefix + x]) for x in ["open", "high", "low"]]
-            upper, lower = entry_px * (1 + tp), entry_px * (1 + sl)
-            px, reason, timing = None, None, "日中"
-            if o >= upper:
-                px, reason, timing = o, "TP", "寄り"
-            elif o <= lower:
-                px, reason, timing = o, "SL", "寄り"
-            elif l <= lower:
-                px, reason = lower, "SL"
-            elif h >= upper:
-                px, reason = upper, "TP"
-            if reason is not None:
-                sell(i, px, reason, timing)
-                if tag == "SOXS_MA":
-                    last_ma_sl = i if reason == "SL" else -999
-                if tag == "SC":
-                    last_sc_sl = i if reason == "SL" else -999
-                pos, pending_exit = "CASH", False
-            elif i - entry_i + 1 >= hold:
-                pending_exit = True
-        primary = bool(row.sig_or3 or row.sig_or4)
-        if row.sig_sc and i - last_sc_sl <= BASELINE_SC_LOCK:
-            primary = bool(row.sig_base_alert or row.sig_base_normal or row.sig_bb or row.sig_or4)
-        long_tag = ("_PRIMARY" if primary else "DIP_REBOUND" if row.sig_dip_rebound
-                    else "TREND_GC" if row.sig_trend_gc else None)
-        ma = bool(row.sig_soxs_ma and row.vix < 20 and i - last_ma_sl > BASELINE_SOXS_LOCK)
-        short_tag = ("SOXS_PRE_DC" if row.sig_soxs_pre else "SOXS_BB" if row.sig_soxs_bb
-                     else "SOXS_MA" if ma else None)
-        if pos == "CASH":
-            pending = long_tag or short_tag
-        elif pos == "SOXS" and long_tag:
-            pending_exit, pending = True, long_tag
-        state.loc[d.index[i]] = [pos, pending or "", pos == "CASH" and pending is None]
-    cols = ["entry_date", "exit_date", "sig_type", "asset", "exit_reason", "ret"]
-    return state, pd.DataFrame(trades, columns=cols), actions
-
-def baseline_rejection_flags(d):
-    close, ma = d.smh_close, d.smh_ma20
-    valid = (close.rolling(10).mean().notna() & ma.notna()
-             & d.smh_ma50.shift(10).notna() & d.smh_low.shift(1).rolling(3).min().notna())
-    valid.iloc[0] = False
-    trend = valid & close.lt(d.smh_ma50) & d.smh_ma50.lt(d.smh_ma50.shift(10))
-    above = close.ge(ma)
-    recent = above.shift(1, fill_value=False).rolling(3, min_periods=1).max().eq(1)
-    candidate = (trend & recent & close.lt(ma) & close.lt(d.smh_low.shift(1))).fillna(False)
-    flags = pd.Series(False, index=d.index)
-    last_above, used = -10**9, True
-    for i in range(len(d)):
-        if above.iloc[i]:
-            last_above, used = i, False
-        elif not used and i - last_above <= 3 and candidate.iloc[i]:
-            flags.iloc[i], used = True, True
-    # QQQ条件は最初のR3点灯日だけで判定。後日条件が揃っても追いかけない。
-    qma = d.qqq.rolling(50).mean()
-    return flags, d.qqq.lt(qma), qma
-
-def baseline_reference_r3(d, state, actions, eligible, sl, cost, r3_weight):
-    cash, qty, position, pending_r3 = 1.0, 0.0, None, False
-    equity, held, ledger = np.ones(len(d)), np.zeros(len(d), bool), []
-    skipped = 0
-    exposure = np.zeros(len(d))
-
-    def buy(i, owner, tag, asset, px):
-        nonlocal cash, qty, position
-        if position is not None:
-            raise AssertionError("保有が重複しました")
-        budget = cash * (r3_weight if owner == "R3" else 1.0)
-        qty, cash = budget / (px * (1 + cost)), cash - budget
-        position = {"owner": owner, "sig_type": tag, "asset": asset,
-                    "signal_date": d.index[i - 1], "entry_date": d.index[i],
-                    "entry_px": px, "entry_i": i}
-
-    def sell(i, px, reason, timing, both=False):
-        nonlocal cash, qty, position
-        if position is None:
-            raise AssertionError("未保有の決済です")
-        rec = position.copy()
-        entry = rec.pop("entry_i")
-        cash, qty = cash + qty * px * (1 - cost), 0.0
-        rec.update(exit_date=d.index[i], exit_px=px, exit_reason=reason, timing=timing,
-                   hold_days=i - entry + (timing != "寄り"),
-                   both_hit=both, status="CLOSED")
-        rec["gross_%"] = (px / rec["entry_px"] - 1) * 100
-        rec["net_%"] = (px / rec["entry_px"] * (1 - cost) / (1 + cost) - 1) * 100
-        ledger.append(rec)
-        position = None
-
-    for i in range(1, len(d)):
-        row = d.iloc[i]
-        if pending_r3:
-            buy(i, "R3", "R3", "SOXS", float(row.soxs_open))
-            pending_r3 = False
-        for kind, tag, asset, px, reason, timing in actions[i]:
-            if kind == "BUY":
-                if position is not None and position["owner"] == "R3":
-                    sell(i, float(row.soxs_open), "v19:" + tag, "寄り")
-                buy(i, "v19", tag, asset, px)
-            else:
-                if position is None or position["owner"] != "v19" or position["sig_type"] != tag:
-                    raise AssertionError("元v19の決済と不一致です")
-                sell(i, px, reason, timing)
-        if position is not None and position["owner"] == "R3":
-            px = position["entry_px"]
-            upper, lower = px * (1 + BASELINE_R3_TP), px * (1 - sl)
-            o, h, l = float(row.soxs_open), float(row.soxs_high), float(row.soxs_low)
-            if o >= upper:
-                sell(i, o, "TP", "寄り")
-            elif o <= lower:
-                sell(i, o, "SL", "寄り")
-            elif l <= lower:
-                sell(i, lower, "SL", "日中", h >= upper)
-            elif h >= upper:
-                sell(i, upper, "TP", "日中")
-            elif i - position["entry_i"] + 1 >= BASELINE_R3_HOLD:
-                sell(i, float(row.soxs_close), "TIME", "引け")
-        if state.v19_pos.iloc[i] != "CASH":
-            if position is None or position["owner"] != "v19" or position["asset"] != state.v19_pos.iloc[i]:
-                raise AssertionError("元v19の保有が維持されていません")
-        elif position is not None and position["owner"] == "v19":
-            raise AssertionError("元v19の保有と不一致です")
-        held[i] = position is not None
-        mark = (float(row.soxs_close) if position["asset"] == "SOXS" else float(row.close)) if held[i] else 0
-        equity[i] = cash + qty * mark
-        exposure[i] = qty * mark / equity[i]
-        if eligible.iloc[i]:
-            if not state.v19_free.iloc[i]:
-                raise AssertionError("v19の空き時間以外でR3注文が出ました")
-            if position is None:
-                pending_r3 = True
-            else:
-                skipped += 1
-    if position is not None:
-        rec = position.copy()
-        entry = rec.pop("entry_i")
-        rec.update(exit_date=pd.NaT, exit_px=mark, exit_reason="OPEN", timing="評価中",
-                   hold_days=len(d) - entry, both_hit=False, status="OPEN")
-        rec["gross_%"] = (mark / rec["entry_px"] - 1) * 100
-        rec["net_%"] = (mark / rec["entry_px"] / (1 + cost) - 1) * 100
-        ledger.append(rec)
-    return (pd.Series(equity, index=d.index), pd.Series(held, index=d.index),
-            pd.DataFrame(ledger, columns=BASELINE_CORE_COLS), skipped, pending_r3,
-            pd.Series(exposure, index=d.index))
-
-def baseline_rate_calendar(raw):
-    holidays = USFederalHolidayCalendar().holidays(start=raw.index[0], end=raw.index[-1])
-    holidays = holidays.union(GoodFriday.dates(raw.index[0], raw.index[-1]))
-    expected = pd.bdate_range(raw.index[0], raw.index[-1]).difference(holidays)
-    # 休場の近似。実値がある休日は採用。通常営業日の未取得はNaNのまま残す。
-    return expected.union(raw.index[raw.TNX.notna()]).sort_values()
-
-def baseline_available_rates(observations, stock_index):
-    # pandas 3系では自動生成した日付の精度がs/us等で異なる。値は動かさずnsに統一。
-    stock_index = pd.DatetimeIndex(stock_index).as_unit('ns')
-    observations = observations.copy()
-    observations.index = pd.DatetimeIndex(observations.index).as_unit('ns')
-    observations['assumed_release_date'] = pd.to_datetime(
-        observations['assumed_release_date']).astype('datetime64[ns]')
-    if not stock_index.is_monotonic_increasing or not stock_index.is_unique:
-        raise ValueError('株式営業日は昇順・重複なしが必要です。')
-    right = observations.reset_index().sort_values(['assumed_release_date', 'observation_date'])
-    known = pd.merge_asof(pd.DataFrame({'decision_date': stock_index}), right,
-        left_on='decision_date', right_on='assumed_release_date', direction='backward',
-        allow_exact_matches=True).set_index('decision_date')
-    known.index.name = stock_index.name
-    result = known[['observation_date', 'assumed_release_date', 'TNX', 'previous_high10']].copy()
-    result['rate_valid'] = known.valid.eq(True)
-    slots = stock_index.searchsorted(right.assumed_release_date.to_numpy(dtype='datetime64[ns]'))
-    keep = right.break_up.to_numpy(bool) & (slots < len(stock_index))
-    chosen = slots[keep]
-    result['available_break_up'] = stock_index.isin(stock_index[np.unique(chosen)])
-    events = pd.Series(pd.NaT, index=stock_index, dtype='datetime64[ns]')
-    for slot, observed in zip(chosen, right.loc[keep, 'observation_date']):
-        events.iloc[slot] = observed
-    result['recent_break_up'] = result.rate_valid & result.available_break_up.rolling(BASELINE_RECENT, min_periods=1).max().eq(1)
-    result['recent_event_observation'] = events.ffill().where(result.recent_break_up)
-    result['input_asof_date'] = stock_index
-    visible = result.observation_date.notna()
-    if not (result.loc[visible, 'observation_date'].le(result.loc[visible, 'assumed_release_date']).all()
-            and result.loc[visible, 'assumed_release_date'].le(result.index[visible]).all()):
-        raise AssertionError('^TNXの利用開始日前に判定しています。')
-    return result
-
-def baseline_build_shadow_slots(d, positions, buys):
-    # 金利通過・実Cの早期決済に関係なく、10日または既存注文まで仮想枠を占有。
-    positions = np.asarray(positions, dtype=int)
-    if len(positions) and (positions.min() < 1 or positions.max() >= len(d)
-                          or (np.diff(positions) <= 0).any()):
-        raise ValueError('仮想枠の候補日は昇順・重複なし・検証期間内が必要です。')
-    candidates, buy_set = set(positions.tolist()), set(np.asarray(buys, dtype=int).tolist())
-    pending, active, rows, audit = None, None, [], []
-    def record(signal, entry, out, reason, timing, status):
-        return {'signal_date': d.index[signal],
-            'entry_date': d.index[entry] if entry is not None else pd.NaT,
-            'exit_date': d.index[out] if out is not None else pd.NaT,
-            'exit_reason': reason, 'timing': timing,
-            'hold_days': (out-entry+(timing != '寄り') if out is not None else
-                          len(d)-entry if entry is not None else 0), 'status': status}
-    for i in range(1, len(d)):
-        if pending is not None:
-            if active is not None or i in buy_set:
-                raise AssertionError('仮想枠の購入と既存注文が重複しています。')
-            active, pending = (pending, i), None
-        if active is not None:
-            signal, entry = active
-            switch = i > entry and i in buy_set
-            if switch or i == entry + BASELINE_YB_HOLD - 1:
-                rows.append(record(signal, entry, i, '既存へ交代' if switch else 'TIME',
-                                   '寄り' if switch else '引け', 'CLOSED'))
-                active = None
-        if i in candidates:
-            chosen = active is None
-            audit.append({'signal_date': d.index[i], '基準枠採用': chosen,
-                          '基準枠起点': d.index[i if chosen else active[0]]})
-            if chosen:
-                pending = i
-    if active is not None:
-        rows.append(record(*active, None, 'OPEN', '評価中', 'OPEN'))
-    if pending is not None:
-        rows.append(record(pending, None, None, 'WAITING', '未購入', 'WAITING'))
-    columns = ['signal_date', 'entry_date', 'exit_date', 'exit_reason', 'timing', 'hold_days', 'status']
-    decisions = pd.DataFrame(audit, columns=['signal_date', '基準枠採用', '基準枠起点'])
-    decisions = decisions.set_index('signal_date').reindex(d.index[positions].rename('signal_date'))
-    decisions['基準枠採用'] = decisions['基準枠採用'].astype(bool)
-    decisions['基準枠起点'] = pd.to_datetime(decisions['基準枠起点'])
-    return pd.DataFrame(rows, columns=columns), decisions
-
-def baseline_yield_observations(raw):
-    p = raw.reindex(baseline_rate_calendar(raw)).copy().rename_axis('observation_date')
-    y = p.TNX
-    p['previous_high10'] = y.shift(1).rolling(BASELINE_YIELD_LOOKBACK,min_periods=BASELINE_YIELD_LOOKBACK).max()
-    p['valid'] = np.isfinite(p[['TNX','previous_high10']]).all(axis=1)
-    above = p.valid & y.gt(p.previous_high10)
-    p['break_up'] = above & ~above.shift(1,fill_value=False)
-    p['assumed_release_date'] = p.index
-    return p
-
-def baseline_stock_breakout(history):
-    previous = history.high.shift(1).rolling(BASELINE_STOCK_LOOKBACK,min_periods=BASELINE_STOCK_LOOKBACK).max()
-    valid = np.isfinite(history.close) & np.isfinite(previous)
-    above = history.close.gt(previous)
-    return (valid & valid.shift(1,fill_value=False) & above & ~above.shift(1,fill_value=False)).astype(bool)
-
-def prepare_candidates(df):
-    """実口座の状態を変更せず、採用済みv20と同じ独立候補列を作る。"""
-    state, _, actions = baseline_core_events(df)
-    r3_raw, _, _ = baseline_rejection_flags(df)
-    r3 = r3_raw & state.v19_free
-    _, _, trades, _, pending, exposure = baseline_reference_r3(
-        df, state, actions, r3, BASELINE_R3_SL, COST, .5)
-    reserved = pd.Series(df.index.isin(pd.to_datetime(trades.signal_date)), index=df.index)
-    if pending:
-        reserved.iloc[-1] = True
-    free = state.v19_free & exposure.eq(0) & ~reserved
-    history = df.attrs['smh_history']
-    observations = baseline_yield_observations(df.attrs['tnx_raw'])
-    rates = baseline_available_rates(observations, history.index).reindex(df.index)
-    breakout = baseline_stock_breakout(history).reindex(df.index, fill_value=False)
-    breakout.iloc[0] = False
-    candidate = breakout & free & rates.rate_valid
-    buys = np.unique(df.index.get_indexer(pd.to_datetime(trades.entry_date)))
-    _, slots = baseline_build_shadow_slots(df, np.flatnonzero(candidate.to_numpy(bool)), buys)
-    shadow = slots['基準枠採用'].reindex(df.index, fill_value=False).astype(bool)
-    result = pd.DataFrame({'R3': r3, 'YB': shadow & rates.rate_valid & rates.recent_break_up},
-                          index=df.index).astype(bool)
-    diagnostics = pd.DataFrame({'R3_raw': r3_raw, 'YB_breakout': breakout,
-        'baseline_free': free, 'YB_shadow': shadow,
-        'rate_valid': rates.rate_valid, 'rate_recent': rates.recent_break_up,
-        'TNX': rates.TNX, 'rate_observation_date': rates.observation_date}, index=df.index)
-    return result, diagnostics
-
-
-def count_hold_days(df, entry_date, current_date):
-    if not entry_date:
-        return 0
-    return int(len(df.loc[pd.Timestamp(entry_date):pd.Timestamp(current_date)]))
-
-
-def days_since(df, previous, current):
-    return count_hold_days(df, previous, current) - 1 if previous else 10**9
-
-
-def core_choice(row, sc_locked, ma_locked):
-    # 本体の優先順位・SCロック判定は検証版v20を維持する。
-    primary = bool(row.sig_or3 or row.sig_or4)
-    if bool(row.sig_sc) and sc_locked:
-        primary = bool(row.sig_base_alert or row.sig_base_normal or row.sig_bb or row.sig_or4)
-    long = None
-    if primary:
-        long = next((name for col, name in [('sig_sc', 'SC'),
-            ('sig_base_alert', 'base_alert'), ('sig_base_normal', 'base_normal'),
-            ('sig_bb', 'bb')] if bool(row[col])), 'OR4')
-    elif bool(row.sig_dip_rebound):
-        long = 'DIP_REBOUND'
-    elif bool(row.sig_trend_gc):
-        long = 'TREND_GC'
-    short = ('SOXS_PRE_DC' if bool(row.sig_soxs_pre) else
-             'SOXS_BB' if bool(row.sig_soxs_bb) else
-             'SOXS_MA' if bool(row.sig_soxs_ma) and row.vix < 20 and not ma_locked else None)
-    return long, short
-
-
-def default_state():
-    return dict(schema_version=20, position='CASH', sig_type=None,
-        entry_price=None, entry_date=None, entry_signal_date=None, hold_days=0, lot_fraction=0.,
-        pending_entry=None, pending_entry_sig_type=None, pending_entry_signal_date=None,
-        pending_entry_lot_fraction=None, pending_exit_next_open=False,
-        pending_exit_reason=None, pending_exit_signal_date=None,
-        last_soxs_ma_sl_date=None, last_sc_sl_date=None,
-        sniper_pos=False, sniper_ep=None, sniper_ed=None,
-        sniper_pending_entry=False, sniper_pending_exit=False,
-        sniper_pending_entry_signal_date=None, sniper_pending_exit_signal_date=None,
-        last_processed_date=None, half_activation_date=None, outbox=[])
-
-def normalize_state(saved, df):
-    """旧stateを保有・予約ごと引き継ぐ。同じ日足を二回売買処理しない。"""
-    state = default_state()
-    state.update(copy.deepcopy(saved))
-    legacy = saved.get('schema_version') != 20
-    latest = df.index[-1]
-    if state.get('sig_type'):
-        state['sig_type'] = canonical_tag(state['sig_type'])
-        strategy_label(state['sig_type'])
-    if state.get('pending_entry_sig_type'):
-        state['pending_entry_sig_type'] = canonical_tag(state['pending_entry_sig_type'])
-        strategy_label(state['pending_entry_sig_type'])
-    if state['position'] not in ('CASH', 'SOXL', 'SOXS'):
-        raise ValueError('state.json の保有銘柄が不正です。')
-    if state['position'] != 'CASH':
-        if not state.get('sig_type') or not state.get('entry_date') or not state.get('entry_price'):
-            raise ValueError('保有中stateの戦略名・買付日・価格が不足しています。')
-        state['lot_fraction'] = lot_for(state['sig_type'])
-    else:
-        state['lot_fraction'] = 0.
-    if state.get('pending_entry'):
-        if not state.get('pending_entry_sig_type') or not state.get('pending_entry_signal_date'):
-            raise ValueError('買付予約の日付・戦略名が不足しています。')
-        state['pending_entry_lot_fraction'] = lot_for(state['pending_entry_sig_type'])
-
-    if not state.get('last_processed_date'):
-        explicit = os.environ.get('LEGACY_STATE_ASOF', '')
-        anchor = pd.Timestamp(explicit) if explicit else None
-        if anchor is None and state.get('pending_entry_signal_date'):
-            anchor = pd.Timestamp(state['pending_entry_signal_date'])
-        if anchor is None and state['position'] != 'CASH' and state.get('hold_days', 0) > 0:
-            entry_i = int(df.index.searchsorted(pd.Timestamp(state['entry_date'])))
-            asof_i = entry_i + int(state['hold_days']) - 1
-            if asof_i >= len(df):
-                raise ValueError('旧stateの保有日数が価格期間を超えています。')
-            anchor = df.index[asof_i]
-        if anchor is None and state.get('sniper_pos'):
-            # 旧サブ口座には日次カウンターがない。保有を維持して最新日から再開。
-            anchor = latest
-        if anchor is None and (state.get('sniper_pending_entry') or state.get('sniper_pending_exit')):
-            anchor = latest
-        if anchor is None:
-            anchor = df.index[-2]
-        if anchor > latest or anchor < df.index[0]:
-            raise ValueError('state.json の処理日が取得価格の期間外です。')
-        state['last_processed_date'] = str(anchor.date())
-
-    anchor = pd.Timestamp(state['last_processed_date'])
-    if anchor > latest or anchor < df.index[0]:
-        raise ValueError('state.json と価格データの日付が逆転しています。状態は更新しません。')
-    if state.get('pending_exit_next_open') and not state.get('pending_exit_signal_date'):
-        state['pending_exit_signal_date'] = state['last_processed_date']
-    for kind in ('entry', 'exit'):
-        key = f'sniper_pending_{kind}_signal_date'
-        if state.get(f'sniper_pending_{kind}') and not state.get(key):
-            state[key] = state['last_processed_date']
-    state['schema_version'] = 20
-    state['half_activation_date'] = state.get('half_activation_date') or str(latest.date())
-    return state, legacy
-
-
-def main_step(state, df, i, flags):
-    """一つの確定日足を処理する。stateは呼び出し元のコピーだけを変更する。"""
-    row, date = df.iloc[i], str(df.index[i].date())
-    events = []
-
-    def event(kind, tag, asset, **extra):
-        record = dict(date=date, kind=kind, strategy=tag, asset=asset,
-                      lot_fraction=lot_for(tag), **extra)
-        events.append(record)
-
-    def sell(px, reason, timing, both=False):
-        tag, asset, ep = state['sig_type'], state['position'], float(state['entry_price'])
-        net = px / ep * (1 - COST) / (1 + COST) - 1
-        event('EXIT', tag, asset, price=float(px), reason=reason, timing=timing,
-              both_hit=bool(both), net_pct=net*100,
-              hold_days=count_hold_days(df, state['entry_date'], date)-(timing == '寄り'),
-              entry_date=state['entry_date'])
-        if reason in ('TP', 'SL'):
-            if tag == 'SC':
-                state['last_sc_sl_date'] = date if reason == 'SL' else None
-            if tag == 'SOXS_MA':
-                state['last_soxs_ma_sl_date'] = date if reason == 'SL' else None
-        state.update(position='CASH', sig_type=None, entry_price=None, entry_date=None,
-            entry_signal_date=None, hold_days=0, lot_fraction=0.,
-            pending_exit_next_open=False, pending_exit_reason=None, pending_exit_signal_date=None)
-
-    def opening(asset):
-        return float(row.soxs_open if asset == 'SOXS' else row.open)
-
-    if state.get('pending_exit_next_open') and pd.Timestamp(state['pending_exit_signal_date']) < df.index[i]:
-        if state['position'] == 'CASH':
-            raise ValueError('未保有の売却予約があります。')
-        sell(opening(state['position']), state.get('pending_exit_reason') or 'TIME', '寄り')
-
-    if state.get('pending_entry') and pd.Timestamp(state['pending_entry_signal_date']) < df.index[i]:
-        tag = state['pending_entry_sig_type']
-        asset = state['pending_entry']
-        signal_date = state['pending_entry_signal_date']
-        if state['position'] != 'CASH':
-            if tag in HALF_ORDER or state['sig_type'] not in HALF_ORDER:
-                raise ValueError('許可されていない保有交代です。')
-            sell(opening(state['position']), '本体へ交代', '寄り')
-        px = opening(asset)
-        state.update(position=asset, sig_type=tag, entry_price=px, entry_date=date,
-            entry_signal_date=signal_date, hold_days=1, lot_fraction=lot_for(tag),
-            pending_entry=None, pending_entry_sig_type=None, pending_entry_signal_date=None,
-            pending_entry_lot_fraction=None)
-        event('ENTRY', tag, asset, price=px, timing='寄り')
-
-    if state['position'] != 'CASH':
-        tag, ep = state['sig_type'], float(state['entry_price'])
-        p = PARAMS[tag]
-        hd = count_hold_days(df, state['entry_date'], date)
-        state['hold_days'] = hd
-        prefix = 'soxs_' if state['position'] == 'SOXS' else ''
-        o, h, l = [float(row[prefix+k]) for k in ('open', 'high', 'low')]
-        upper, lower = ep*(1+p['tp']), ep*(1+p['sl'])
-        eps = ep*1e-10 if tag == 'YB' else 0.
-        if o >= upper-eps:
-            sell(o, 'TP', '寄り')
-        elif o <= lower+eps:
-            sell(o, 'SL', '寄り')
-        elif l <= lower+eps:
-            sell(lower, 'SL', '日中', h >= upper-eps)
-        elif h >= upper-eps:
-            sell(upper, 'TP', '日中')
-        elif hd >= p['hold']:
-            if tag in HALF_ORDER:
-                sell(float(row[prefix+'close']), 'TIME', '引け')
-            else:
-                state.update(pending_exit_next_open=True, pending_exit_reason='TIME',
-                             pending_exit_signal_date=date)
-                event('EXIT_ORDER', tag, state['position'], reason='TIME')
-
-    sc_locked = days_since(df, state.get('last_sc_sl_date'), date) <= SC_LOCK_DAYS
-    ma_locked = days_since(df, state.get('last_soxs_ma_sl_date'), date) <= SOXS_LOCK_DAYS
-    long, short = core_choice(row, sc_locked, ma_locked)
-    tag = long or short
-    held_half = state['sig_type'] in HALF_ORDER
-    full_switch = state['position'] == 'SOXS' and not held_half and bool(long)
-    if tag and (state['position'] == 'CASH' or held_half or full_switch):
-        tag = long if full_switch else tag
-        if full_switch:
-            state.update(pending_exit_next_open=True, pending_exit_reason='本体ロングへ交代',
-                         pending_exit_signal_date=date)
-        state.update(pending_entry='SOXS' if tag.startswith('SOXS') else 'SOXL',
-            pending_entry_sig_type=tag, pending_entry_signal_date=date,
-            pending_entry_lot_fraction=1.)
-        event('ENTRY_ORDER', tag, state['pending_entry'],
-              replaces=state['sig_type'] if state['position'] != 'CASH' else None)
-
-    active = not state.get('half_activation_date') or df.index[i] >= pd.Timestamp(state['half_activation_date'])
-    for tag in HALF_ORDER:
-        if not active or not bool(flags[tag]):
-            continue
-        if state['position'] == 'CASH' and not state.get('pending_entry'):
-            state.update(pending_entry=HALF_ASSETS[tag], pending_entry_sig_type=tag,
-                pending_entry_signal_date=date, pending_entry_lot_fraction=.5)
-            event('ENTRY_ORDER', tag, HALF_ASSETS[tag], replaces=None)
-        else:
-            event('SKIP', tag, HALF_ASSETS[tag], reason='保有・本体注文を優先（後追いなし）')
-    return events
-
-
-def sniper_step(state, df, i):
-    """旧版のサブ口座ロジックを維持。メインの半量枠とは独立。"""
-    row, date = df.iloc[i], str(df.index[i].date())
-    events = []
-    if state.get('sniper_pending_exit') and pd.Timestamp(state['sniper_pending_exit_signal_date']) < df.index[i]:
-        events.append(f'{date} SOXL売却完了：期限・寄り {row.open:.2f}')
-        state.update(sniper_pos=False, sniper_ep=None, sniper_ed=None,
-            sniper_pending_exit=False, sniper_pending_exit_signal_date=None)
-    elif state.get('sniper_pending_entry') and pd.Timestamp(state['sniper_pending_entry_signal_date']) < df.index[i]:
-        state.update(sniper_pos=True, sniper_ep=float(row.open), sniper_ed=date,
-            sniper_pending_entry=False, sniper_pending_entry_signal_date=None)
-        events.append(f'{date} SOXL買付完了：寄り {row.open:.2f}')
-    elif state.get('sniper_pos') and state.get('sniper_ep'):
-        ep = float(state['sniper_ep'])
-        hd = count_hold_days(df, state['sniper_ed'], date)
-        if row.low <= ep*.90:
-            state.update(sniper_pos=False, sniper_ep=None, sniper_ed=None)
-            events.append(f'{date} SOXL売却：SL {ep*.90:.2f}')
-        elif row.high >= ep*1.16:
-            state.update(sniper_pos=False, sniper_ep=None, sniper_ed=None)
-            events.append(f'{date} SOXL売却：TP {ep*1.16:.2f}')
-        elif hd >= 20:
-            state.update(sniper_pending_exit=True, sniper_pending_exit_signal_date=date)
-            events.append(f'{date} SOXL売却予約：20日到達・翌営業日寄り')
-    if not state.get('sniper_pos') and not state.get('sniper_pending_entry') and not state.get('sniper_pending_exit'):
-        if bool(row.sig_sniper):
-            state.update(sniper_pending_entry=True, sniper_pending_entry_signal_date=date)
-            events.append(f'{date} SOXL買付予約：翌営業日寄り')
-    return events
-
-
-def advance_state(saved, df, flags):
-    state, upgraded = normalize_state(saved, df)
-    dates = df.index[df.index > pd.Timestamp(state['last_processed_date'])]
-    events, sniper_events = [], []
-    for date in dates:
-        i = int(df.index.get_loc(date))
-        # 前回以降に欠損日があれば、不完全なOHLCで約定判定しない。
-        required = ['open','high','low','close','soxs_open','soxs_high','soxs_low','soxs_close']
-        prices = df.attrs.get('unfilled_trade_ohlc', df).loc[date, required].to_numpy(dtype=float)
-        if not np.isfinite(prices).all() or (prices <= 0).any():
-            raise ValueError('未処理日の売買価格に欠損・不正値があります。状態は保存しません。')
-        for offset in (0, 4):
-            o, h, l, c = prices[offset:offset+4]
-            if h < max(o, c)-1e-8 or l > min(o, c)+1e-8 or h < l:
-                raise ValueError('未処理日のOHLC関係が不正です。状態は保存しません。')
-        events.extend(main_step(state, df, i, flags.loc[date]))
-        sniper_events.extend(sniper_step(state, df, i))
-        state['last_processed_date'] = str(date.date())
-    return state, events, sniper_events, bool(len(dates) or upgraded), upgraded
-
-
-def format_event(e):
-    head = f"{e['date']} {strategy_label(e['strategy'])} / {e['asset']} / {lot_label(e['strategy'])}"
-    if e['kind'] == 'ENTRY':
-        return f"{head}\n  買付想定：寄り {e['price']:.2f}"
-    if e['kind'] == 'EXIT':
-        both = '（同日両到達・SL優先）' if e.get('both_hit') else ''
-        return (f"{head}\n  売却想定：{e['reason']}・{e['timing']} {e['price']:.2f}{both}"
-                f" / 購入額比損益 {e['net_pct']:+.2f}%（往復費用込み）")
-    if e['kind'] == 'ENTRY_ORDER':
-        replacement = f"（{strategy_label(e['replaces'])}保有から本体へ交代）" if e.get('replaces') else ''
-        return f"{head}\n  翌営業日寄りの買付予約{replacement}"
-    if e['kind'] == 'EXIT_ORDER':
-        return f"{head}\n  保有期限到達：翌営業日寄りの売却予約"
-    return f"{head}\n  見送り：{e['reason']}"
-
-
-def build_message(df, state, flags, diagnostics, events, sniper_events, upgraded=False):
-    row, day = df.iloc[-1], df.index[-1]
-    yn = lambda value: '✅' if bool(value) else '❌'
-    sc_age = days_since(df, state.get('last_sc_sl_date'), day)
-    ma_age = days_since(df, state.get('last_soxs_ma_sl_date'), day)
-    sc_locked, ma_locked = sc_age <= SC_LOCK_DAYS, ma_age <= SOXS_LOCK_DAYS
-    diag = diagnostics.iloc[-1]
-    lines = [f'【SOXL戦略 v20 日次レポート {day.date()}】']
-    if upgraded:
-        lines.append('通知形式を更新。既存の保有・予約を引き継ぎました。')
-    lines.extend(['', '📊 マーケット指標',
-        f"VIX：{row.vix:.2f}（5日 {row.vix_ret5*100:+.1f}%）",
-        f"VVIX：{row.vvix:.2f}（5日 {row.vvix_ret5*100:+.1f}%）",
-        f"SOXL RSI2：{row.rsi2:.2f} / bb_z：{row.bb_z:.2f}",
-        f"QQQ vs 200MA：{(row.qqq/row.qqq_ma200-1)*100:+.2f}%",
-        f"SMH vs 200MA：{(row.smh/row.smh_ma200-1)*100:+.2f}%",
-        f"SMH OBV > MA20：{yn(row.smh_obv > row.smh_obv_ma20)}",
-        f"^TNX 上方10日ブレイク・直近5日：{yn(diag.rate_valid and diag.rate_recent)}",
-        '', '📡 メイン口座 シグナル（戦略ごと）'])
-    signal_names = [('sig_sc', 'SC'), ('sig_base_alert', 'base_alert'),
-        ('sig_base_normal', 'base_normal'), ('sig_bb', 'bb'), ('sig_or4', 'OR4'),
-        ('sig_dip_rebound', 'DIP_REBOUND'), ('sig_trend_gc', 'TREND_GC'),
-        ('sig_soxs_pre', 'SOXS_PRE_DC'), ('sig_soxs_bb', 'SOXS_BB'),
-        ('sig_soxs_ma', 'SOXS_MA')]
-    for col, tag in signal_names:
-        enabled = bool(row[col])
-        note = ''
-        if tag == 'SC' and sc_locked:
-            note = f' / 🔒SL後ロック中（あと{SC_LOCK_DAYS+1-sc_age}営業日）'
-        if tag == 'SOXS_MA':
-            enabled = enabled and row.vix < 20 and not ma_locked
-            if ma_locked:
-                note = f' / 🔒SL後ロック中（あと{SOXS_LOCK_DAYS+1-ma_age}営業日）'
-            elif row.vix >= 20:
-                note = ' / VIX条件外'
-        lines.append(f'{strategy_label(tag)} / {lot_label(tag)}：{yn(enabled)}{note}')
-    for tag in HALF_ORDER:
-        note = ''
-        if tag == 'R3' and bool(diag.R3_raw) and not bool(flags[tag].iloc[-1]):
-            note = ' / 条件点灯・基準の空き枠なし'
-        if tag == 'YB' and not bool(diag.rate_valid):
-            note = ' / 金利データ不足のため見送り'
-        lines.append(f'{strategy_label(tag)} / {lot_label(tag)}：{yn(flags[tag].iloc[-1])}{note}')
-
-    lines.extend(['', '🏃 メイン口座 アクション'])
-    if events:
-        lines.extend(format_event(e) for e in events)
-    else:
-        lines.append('売買・新規予約の変更なし')
-    lines.extend(['', '💼 メイン口座 ポジション'])
-    if state['position'] == 'CASH':
-        lines.append('現在：現金')
-    else:
-        tag, ep = state['sig_type'], float(state['entry_price'])
-        p = PARAMS[tag]
-        mark = float(row.soxs_close if state['position'] == 'SOXS' else row.close)
-        lines.extend([f"現在：{state['position']} / {strategy_label(tag)} / {lot_label(tag)}",
-            f"買付：{state['entry_date']} {ep:.2f} / 保有{state['hold_days']}/{p['hold']}日",
-            f"購入額比の含み損益：{(mark/ep-1)*100:+.2f}%（費用前）",
-            f"TP：{ep*(1+p['tp']):.2f}（+{p['tp']*100:g}%） / SL：{ep*(1+p['sl']):.2f}（{p['sl']*100:g}%）"])
-    if state.get('pending_exit_next_open'):
-        lines.append(f"翌営業日寄り：{strategy_label(state['sig_type'])} / {lot_label(state['sig_type'])}を売却予定")
-    if state.get('pending_entry'):
-        tag = state['pending_entry_sig_type']
-        p = PARAMS[tag]
-        lines.extend([f"翌営業日寄りの買付予約：{state['pending_entry']} / {strategy_label(tag)} / {lot_label(tag)}",
-            f"TP+{p['tp']*100:g}% / SL{p['sl']*100:g}% / {p['hold']}日",
-            '保有から交代する場合は、旧保有を寄りで全売却してから買付。' if state['position'] != 'CASH' else ''])
-    lines.extend(['半量50%＝買付直前資産の50%を購入費用込みで投入。残りは現金。',
-        '本体優先。ハーフ同士は先着・切替なし。同時点灯だけR3 > YB。',
-        '', '🎯 サブ口座：SOXL Sniper（独立枠）', f"シグナル：{yn(row.sig_sniper)}"])
-    lines.extend(sniper_events or ['売買・予約の変更なし'])
-    if state.get('sniper_pos'):
-        ep = float(state['sniper_ep'])
-        hd = count_hold_days(df, state['sniper_ed'], day)
-        lines.extend([f'SOXL保有中：買付 {ep:.2f} / 保有{hd}/20日',
-            f'購入額比の含み損益：{(row.close/ep-1)*100:+.2f}%（費用前）',
-            f'TP：{ep*1.16:.2f}（+16%） / SL：{ep*.90:.2f}（-10%）'])
-    if state.get('sniper_pending_exit'):
-        lines.append('翌営業日寄り：SOXL売却予定（20日到達）')
-    if state.get('sniper_pending_entry'):
-        lines.append('翌営業日寄り：SOXL買付予約')
-    lines.extend(['', '確定済み日足による判定・約定想定です。実際の約定を取得する機能はありません。',
-                  'ギャップは寄り値を使用。SLは損失上限ではありません。'])
-    return '\n'.join(line for line in lines if line is not None)
-
-
-def load_state():
-    if not STATE_PATH.exists():
-        return {}
-    with STATE_PATH.open(encoding='utf-8') as f:
-        state = json.load(f)
-    if not isinstance(state, dict):
-        raise ValueError('state.json の形式が不正です。')
-    return state
-
-
-def save_state(state):
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_PATH.with_name(STATE_PATH.name + '.tmp')
-    with tmp.open('w', encoding='utf-8') as f:
-        json.dump(state, f, ensure_ascii=False, indent=2, allow_nan=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, STATE_PATH)
-
-
-def git_environment():
-    # extraheaderは追記型。checkoutの認証をコマンド内だけリセットしてから一つ設定する。
-    # .git/configに保存済みのcheckout設定自体は変更しない。
-    env = os.environ.copy()
-    env['GIT_TERMINAL_PROMPT'] = '0'
-    if not GITHUB_TOKEN:
-        return env
-    try:
-        count = int(env.get('GIT_CONFIG_COUNT', '0'))
-        if count < 0:
-            raise ValueError
-    except ValueError:
-        raise RuntimeError('Gitの環境設定GIT_CONFIG_COUNTが不正です。') from None
-    root_key = 'http.https://github.com/.extraheader'
-    repo_key = (f'http.https://github.com/{GITHUB_REPOSITORY}.git.extraheader'
-                if GITHUB_REPOSITORY else root_key)
-    encoded = base64.b64encode(('x-access-token:'+GITHUB_TOKEN).encode()).decode()
-    pairs = [(root_key, '')]
-    if repo_key != root_key:
-        pairs.append((repo_key, ''))
-    pairs.append((repo_key, 'AUTHORIZATION: basic '+encoded))
-    for key, value in pairs:
-        env[f'GIT_CONFIG_KEY_{count}'] = key
-        env[f'GIT_CONFIG_VALUE_{count}'] = value
-        count += 1
-    env['GIT_CONFIG_COUNT'] = str(count)
-    return env
-
-
-def sanitize_git_error(text):
-    text = text.decode('utf-8', errors='replace') if isinstance(text, bytes) else str(text or '')
-    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
-    if GITHUB_TOKEN:
-        encoded = base64.b64encode(('x-access-token:'+GITHUB_TOKEN).encode()).decode()
-        for secret in (GITHUB_TOKEN, encoded):
-            text = text.replace(secret, '[認証情報非表示]')
-    text = re.sub(r'(https?://)[^/\s@]+@', r'\1[認証情報非表示]@', text)
-    text = re.sub(r'(?i)(\b(?:proxy-)?authorization\s*[:=]\s*)(?:basic|bearer)\s+\S+',
-                  r'\1[認証情報非表示]', text)
-    text = re.sub(r'\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+', '[認証情報非表示]', text)
-    return text.strip()[:2000]
-
-
-def git_command(args, *, check=True):
-    # トークンはURL・引数に含めない。失敗時は認証情報を伏せたGitの詳細を出す。
-    phase = str(args[0]) if args else 'command'
-    try:
-        result = subprocess.run(['git', *args], env=git_environment(), capture_output=True,
-                                text=True, check=False, timeout=60)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f'GitHub状態同期のgit {phase}が60秒でタイムアウトしました。'
-                           '状態処理・LINE送信を進めずに停止します。') from None
-    if check and result.returncode != 0:
-        detail = sanitize_git_error(result.stderr or result.stdout) or 'Gitから詳細メッセージがありません。'
-        if phase == 'fetch':
-            hint = f'取得先ブランチ: {STATE_BRANCH}。認証エラーならGITHUB_TOKENの参照先と権限を確認してください。'
-        elif phase == 'push':
-            hint = 'GITHUB_TOKENのcontents: write権限・ブランチ保護・同時実行の有無を確認してください。'
-        else:
-            hint = '上記のGit詳細を確認してください。'
-        raise RuntimeError(f'GitHub状態同期のgit {phase}に失敗しました（終了コード{result.returncode}）。\n'
-                           f'Git詳細: {detail}\n{hint}\nLINE送信前なら送信を停止しています。') from None
-    return result
-
-
-def sync_state_from_github():
-    if not (GITHUB_TOKEN and GITHUB_REPOSITORY):
-        return
-    url = f'https://github.com/{GITHUB_REPOSITORY}.git'
-    git_command(['fetch', url, STATE_BRANCH])
-    # Actionsの古いcheckoutから、前回のstateを巻き戻さない。
-    git_command(['merge', '--ff-only', 'FETCH_HEAD'])
-
-
-def push_state_to_github():
-    if not (GITHUB_TOKEN and GITHUB_REPOSITORY):
-        print('GitHub保存なし：トークンまたはリポジトリ指定がありません。')
-        return
-    git_command(['config', 'user.name', 'github-actions[bot]'])
-    git_command(['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'])
-    git_command(['add', '--', str(STATE_PATH)])
-    diff = git_command(['diff', '--cached', '--quiet', '--', str(STATE_PATH)], check=False)
-    if diff.returncode == 0:
-        return
-    if diff.returncode != 1:
-        raise RuntimeError('state.json の変更確認に失敗しました。')
-    git_command(['commit', '-m', 'Update notification state v20 [skip ci]', '--', str(STATE_PATH)])
-    git_command(['push', f'https://github.com/{GITHUB_REPOSITORY}.git', f'HEAD:{STATE_BRANCH}'])
-
-
-def persist_state(state):
-    save_state(state)
-    push_state_to_github()
-
-
-def split_line_messages(message):
-    # LINEは1テキスト最大5000 UTF-16単位・1リクエスト最大5メッセージ。
-    chunks, chunk = [], ''
-    for line in message.splitlines(keepends=True):
-        if len(line.encode('utf-16-le'))//2 > 4500:
-            raise ValueError('通知の1行が長すぎます。')
-        if len((chunk+line).encode('utf-16-le'))//2 > 4500:
-            chunks.append(chunk.rstrip())
-            chunk = ''
-        chunk += line
-    if chunk:
-        chunks.append(chunk.rstrip())
-    return [{'type': 'text', 'text': text} for text in chunks]
-
-
-def enqueue_message(state, message):
-    messages = split_line_messages(message)
-    for i in range(0, len(messages), 5):
-        state.setdefault('outbox', []).append(dict(
-            retry_key=str(uuid.uuid4()), created_at=pd.Timestamp.now(tz='UTC').isoformat(),
-            messages=messages[i:i+5]))
-
-
-def send_line(item):
-    response = requests.post('https://api.line.me/v2/bot/message/broadcast',
-        headers={'Authorization': 'Bearer '+LINE_TOKEN, 'Content-Type': 'application/json',
-                 'X-Line-Retry-Key': item['retry_key']},
-        json={'messages': item['messages']}, timeout=30)
-    if response.status_code == 409 and response.headers.get('x-line-accepted-request-id'):
-        return  # 同じリトライキーの通知は受理済み。新しいキーで再送しない。
-    response.raise_for_status()
-
-
-def flush_outbox(state):
-    if not LINE_TOKEN:
-        print('LINE送信なし：LINE_TOKENがありません。通知は状態に保存して次回再送します。')
-        return
-    while state.get('outbox'):
-        item = state['outbox'][0]
-        # 最初の試行から24時間以内は同じキーで再送する。未試行なら古い通知も初回送信できる。
-        first = item.get('first_attempt_at')
-        if first and pd.Timestamp.now(tz='UTC')-pd.Timestamp(first) >= pd.Timedelta(hours=24):
-            raise RuntimeError('初回送信から24時間以上たった未確認LINE通知があります。配信状況を確認するまで自動再送を停止します。')
-        if not first:
-            item['first_attempt_at'] = pd.Timestamp.now(tz='UTC').isoformat()
-            persist_state(state)
-        send_line(item)
-        state['outbox'].pop(0)
-        persist_state(state)
-
-
-def main(dry_run=None):
-    if dry_run is None:
-        dry_run = '--dry-run' in sys.argv or os.environ.get('DRY_RUN', '').lower() in ('1','true','yes')
-    if not dry_run:
-        sync_state_from_github()
-    saved = load_state()
-    if not dry_run and saved.get('outbox'):
-        flush_outbox(saved)
-    df = fetch_data()
-    flags, diagnostics = prepare_candidates(df)
-    state, events, sniper_events, changed, upgraded = advance_state(saved, df, flags)
-    if not changed:
-        print(f'{df.index[-1].date()}は処理済みです。売買状態と通知を重複更新しません。')
-        return
-    message = build_message(df, state, flags, diagnostics, events, sniper_events, upgraded)
-    print(message)
-    if dry_run:
-        print('\nDRY_RUN：状態保存・LINE送信・Git操作なし。')
-        return
-    enqueue_message(state, message)
-    # 未送信メッセージと売買状態を先に確定・保存する。失敗後の再実行は同じ通知キーを使用。
-    persist_state(state)
-    flush_outbox(state)
-
-
+_MOBILE_SHA256 = '1556296978943e1faf0222f66fe39b8cf178ac06b62e433557075976ba53bdbb'
+try:
+    _mobile_text = ''.join(_MOBILE_PAYLOAD.split())
+    if len(_mobile_text) != 22545:
+        raise ValueError('文字数不一致')
+    _mobile_bytes = _mobile_lzma.decompress(_mobile_b64.b85decode(_mobile_text))
+    if _mobile_hash.sha256(_mobile_bytes).hexdigest() != _MOBILE_SHA256:
+        raise ValueError('内容不一致')
+    _mobile_source = _mobile_bytes.decode('utf-8')
+    _mobile_filename = '<'+_MOBILE_BUILD+'>'
+    _mobile_code = compile(_mobile_source,_mobile_filename,'exec')
+except Exception as _mobile_error:
+    raise SystemExit('貼り付け内容が不完全か変化しています。ファイル全体を貼り直してください。'
+                     +' ('+type(_mobile_error).__name__+')') from None
 if __name__ == '__main__':
-    main()
-
-
+    if '--show-source' in _mobile_sys.argv:
+        print(_mobile_source,end='')
+        raise SystemExit(0)
+    print('【起動版】'+_MOBILE_BUILD+' / 内容確認OK',flush=True)
+    if '--check-only' in _mobile_sys.argv:
+        raise SystemExit(0)
+_mobile_cache.cache[_mobile_filename] = (len(_mobile_bytes),None,
+                                        _mobile_source.splitlines(True),_mobile_filename)
+exec(_mobile_code,globals())
+if __name__ == '__main__':
+    raise SystemExit(0)
+# END v20-fetch-retry-20261105-mobile1
