@@ -25,17 +25,5 @@
   "sniper_pending_exit_signal_date": null,
   "last_processed_date": "2026-11-13",
   "half_activation_date": "2026-11-02",
-  "outbox": [
-    {
-      "retry_key": "80284e16-3d10-4f92-a65a-5d384fa1ab5b",
-      "created_at": "2026-11-14T01:02:20.186256+00:00",
-      "messages": [
-        {
-          "type": "text",
-          "text": "【SOXL戦略 v20 日次レポート 2026-11-13】\n価格取得：SOXL・QQQ・SMH・TLT・SOXSの日足Close欠損のため、照合済みの通常取引終了値を使用。\n\n📊 マーケット指標\nVIX：19.30（5日 -24.7%）\nVVIX：101.53（5日 -16.7%）\nSOXL RSI2：0.00 / bb_z：-0.92\nQQQ vs 200MA：-0.34%\nSMH vs 200MA：-7.09%\nSMH OBV > MA20：❌\n^TNX 上方10日ブレイク・直近5日：✅\n\n📡 メイン口座 シグナル（戦略ごと）\nSC / 通常100%：❌\nBase Alert / 通常100%：❌\nBase Normal / 通常100%：❌\nBB / 通常100%：❌\nOR4 / 通常100%：❌\nDIP_REBOUND / 通常100%：❌\nTREND_GC / 通常100%：❌\nSOXS_PRE_DC / 通常100%：❌\nSOXS_BB / 通常100%：❌\nSOXS_MA / 通常100%：❌\nR3（20MA回復失敗） / 半量50%：❌\nYB（金利確認付き40日高値突破） / 半量50%：❌\n\n🏃 メイン口座 アクション\n売買・新規予約の変更なし\n\n💼 メイン口座 ポジション\n現在：現金\n半量50%＝買付直前資産の50%を購入費用込みで投入。残りは現金。\n本体優先。ハーフ同士は先着・切替なし。同時点灯だけR3 > YB。\n\n🎯 サブ口座：SOXL Sniper（独立枠）\nシグナル：❌\n売買・予約の変更なし\n\n確定済み日足による判定・約定想定です。実際の約定を取得する機能はありません。\nギャップは寄り値を使用。SLは損失上限ではありません。"
-        }
-      ],
-      "first_attempt_at": "2026-11-14T01:02:21.451686+00:00"
-    }
-  ]
+  "outbox": []
 }
